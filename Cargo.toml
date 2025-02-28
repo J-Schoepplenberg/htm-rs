@@ -1,0 +1,22 @@
+[package]
+name = "htm-rs"
+version = "0.0.1"
+authors = ["Jannis Schoepplenberg <jschoe@proton.me>"]
+description = "Hierarchical Temporal Memory (HTM) implementation in Rust."
+keywords = []
+categories = []
+license = "MIT"
+readme = "README.md"
+repository = ""
+edition = "2021"
+
+[dependencies]
+collect_slice = "1.2.0"
+fnv = "1.0.7"
+fxhash = "0.2.1"
+rand = "0.9.0"
+
+[dependencies.mnist]
+version = "0.6.0"
+features = ["download"]
+

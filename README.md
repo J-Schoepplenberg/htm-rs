@@ -2,6 +2,12 @@
 
 Implements Hierarchical Temporal Memory (HTM) efficiently in Rust, including the Spatial Pooler (SP), Temporal Memory (TM), and SDR Classifier.
 
+## Table of Contents  
+- [Getting Started](#getting-started) 
+- [What is HTM?](#what-is-htm)
+- [Key Concepts](#key-concepts)
+- [MNIST](#mnist)
+
 ## Getting Started
 
 **Install Rust**

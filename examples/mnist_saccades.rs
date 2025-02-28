@@ -18,13 +18,12 @@
 //! - This produces an SDR in the form of winner column indices.
 //! 
 //! Aggregation:
-//! - The patch SDRs are aggregated back into a 28x28 boolean array.
+//! - The individual patch SDRs are aggregated back into one 28x28 boolean array.
 //! - This preserves the original spatial arrangement of the image.
 //! 
 //! Second Layer:
 //! - The aggregated SDR is fed into a second spatial pooler layer.
-//! - This integrates features across the entire image.
-//! - The layer learns higher-level representations by processing the global spatial layout.
+//! - Thus, the layer learns higher-level representations by processing the global spatial layout.
 //! 
 //! SDR Classifier:
 //! - An SDRClassifier is trained on the output of the second spatial pooler.

@@ -57,6 +57,7 @@ impl SDRClassifier {
     /// * `steps` - Defines how many prediction steps the classifier should learn.
     /// * `alpha` - The learning rate.
     /// * `column_size` - The number of input features (used to size weight vectors).
+    #[inline]
     pub fn new(steps: Vec<u8>, alpha: f32, column_size: usize) -> Self {
         let max_step = steps.iter().copied().max().unwrap_or(0) as usize + 1;
         Self {
@@ -91,6 +92,7 @@ impl SDRClassifier {
     ///
     /// A vector of tuples `(step, probability_distribution)` for each prediction step.
     /// Alternatively, an empty vector if inference is disabled.
+    #[inline]
     pub fn compute(
         &mut self,
         record_num: u32,
@@ -156,6 +158,7 @@ impl SDRClassifier {
     /// Performs inference over all prediction steps.
     ///
     /// Returns a vector of tuples `(step, probability_distribution)`, where each distribution sums to 1.
+    #[inline]
     pub fn infer(&self, pattern: &[usize]) -> Vec<(u8, Vec<f32>)> {
         self.steps
             .iter()
@@ -178,6 +181,7 @@ impl SDRClassifier {
     /// * `pattern` - A slice of active indices.
     /// * `step` - The prediction step (horizon) to use.
     /// * `into` - A mutable slice where the computed activations are stored.
+    #[inline]
     pub fn infer_single_step(&self, pattern: &[usize], step: usize, into: &mut [f32]) {
         let matrix = &self.weight_matrix[step];
 

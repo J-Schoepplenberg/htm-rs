@@ -20,6 +20,7 @@ pub struct Topology {
 
 impl Topology {
     /// Creates a new `Topology` from a slice of dimension sizes.
+    #[inline]
     pub fn new(dimensions: &[usize]) -> Self {
         let dims = dimensions.to_vec();
         let strides = Self::strides(&dims);
@@ -29,6 +30,7 @@ impl Topology {
 
     /// Computes the stride values for each dimension in a given slice of dimension sizes.
     /// Strides are used to convert coordinates in N-dimensional space into a single linear index.
+    #[inline]
     fn strides(dims: &[usize]) -> Vec<usize> {
         let mut strides = vec![1; dims.len()];
 
@@ -41,6 +43,7 @@ impl Topology {
 
     /// Converts a linear index into its corresponding set of coordinates in the topology's N-dimensional space.
     /// Each element of the returned `Vec<usize>` is the coordinate along one of the dimensions, in order.
+    #[inline]
     pub fn coordinates(&self, index: usize) -> Vec<usize> {
         let mut remainder = index;
 
@@ -56,6 +59,7 @@ impl Topology {
 
     /// Converts a set of coordinates in the topology's N-dimensional space to a single linear index.
     /// The length of `coords` must match the number of dimensions in the topology.
+    #[inline]
     pub fn index_from_coordinates(&self, coords: &[usize]) -> usize {
         coords.iter().zip(&self.strides).map(|(&c, &s)| c * s).sum()
     }
@@ -63,6 +67,7 @@ impl Topology {
     /// Returns an iterator over the neighborhood of indices within a given `radius` of the
     /// specified `center` index. If `wrapping` is true, the neighborhood wraps around edges of
     /// the topology dimensions; otherwise, it is clipped at boundaries.
+    #[inline]
     pub fn neighborhood(&self, center: usize, radius: usize, wrapping: bool) -> NeighborhoodIter {
         let center_coords = self.coordinates(center);
         let radius = radius as isize;

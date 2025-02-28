@@ -61,6 +61,7 @@ pub struct Synapses {
 
 impl Synapses {
     /// Creates a new synapse pool for `num_columns` columns with capacity `max_synapses` per column.
+    #[inline]
     pub fn new(num_columns: usize, max_potential: usize) -> Self {
         Self {
             synapses: vec![Synapse::default(); num_columns * max_potential],
@@ -71,6 +72,7 @@ impl Synapses {
     }
 
     /// Inserts a new synapse into the specified column.
+    #[inline]
     pub fn insert(&mut self, column: usize, synapse: Synapse) -> usize {
         let count = self.synapse_count_per_column[column];
         assert!(
@@ -86,6 +88,7 @@ impl Synapses {
 
     /// Initializes the synapse pool for a column from the given candidate input indices.
     /// The permanence of each synapse is randomly initialized based on the `init_connected_pct` parameter.
+    #[inline]
     pub fn init_column<R: Rng>(
         &mut self,
         column: usize,
@@ -122,6 +125,7 @@ impl Synapses {
     }
 
     /// Reorders the synapses in a column so that those with permanence ≥ `connected_threshold` come first.
+    #[inline]
     pub fn sort_column(&mut self, column: usize, connected_threshold: f32) {
         let range = self.col_range(column);
         let slice = &mut self.synapses[range];
@@ -142,6 +146,7 @@ impl Synapses {
     /// - if `raise` is true, first raise values until `stimulus_threshold` is met,
     /// - then clamp values to [opts.min, opts.max] (and trim low values).
     /// - finally, sort the column synapses by permanence, so that connected synapses come first.
+    #[inline]
     pub fn update_column_permanences(
         &mut self,
         column: usize,
@@ -167,6 +172,7 @@ impl Synapses {
     }
 
     /// Raises synapse permanence in a column until at least `stimulus_threshold` ≥ `options.connected`.
+    #[inline]
     pub fn raise_column_permanances(
         &mut self,
         column: usize,
@@ -190,6 +196,7 @@ impl Synapses {
     }
 
     /// Returns the index range corresponding to the synapses stored for the given column.
+    #[inline]
     fn col_range(&self, column: usize) -> Range<usize> {
         let start = column * self.max_synapses_per_column;
         let end = start + self.synapse_count_per_column[column];
@@ -197,6 +204,7 @@ impl Synapses {
     }
 
     /// Returns the index range corresponding to the first `size` synapses stored for the given column.
+    #[inline]
     fn col_range_sized(&self, column: usize, size: usize) -> Range<usize> {
         let start = column * self.max_synapses_per_column;
         let end = start + size;
@@ -204,17 +212,20 @@ impl Synapses {
     }
 
     /// Returns an immutable slice for all synapses in the given column.
+    #[inline]
     pub fn column(&self, col: usize) -> &[Synapse] {
         &self.synapses[self.col_range(col)]
     }
 
     /// Returns a mutable slice for all synapses in the given column.
+    #[inline]
     pub fn column_mut(&mut self, column: usize) -> &mut [Synapse] {
         let r = self.col_range(column);
         &mut self.synapses[r]
     }
 
     /// Returns an immutable slice for the connected synapses in the given column.
+    #[inline]
     pub fn colum_connected(&self, column: usize) -> &[Synapse] {
         &self.synapses
             [self.col_range_sized(column, self.connected_synapse_count_per_column[column])]

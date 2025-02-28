@@ -53,31 +53,32 @@ pub struct CellAddress {
 }
 
 /// Represents a synapse that connects a segment to a presynaptic cell, holding a permanence value.
-#[derive(Clone, Debug)]
+#[derive(Debug)]
 pub struct Synapse {
     presynaptic_cell: CellAddress,
     permanence: f64,
 }
 
 /// Represents a dendritic segment (or distal segment) which contains a list of synapses and belongs to a cell.
-#[derive(Clone, Debug)]
+#[derive(Debug)]
 pub struct Segment {
     synapses: Vec<Synapse>,
 }
 
 /// Represents a cell that contains one or more dendritic segments.
-#[derive(Clone, Debug)]
+#[derive(Debug)]
 pub struct Cell {
     segments: Vec<Segment>,
 }
 
 /// Represents a column which is a group of cells.
-#[derive(Clone, Debug)]
+#[derive(Debug)]
 pub struct Column {
     cells: Vec<Cell>,
 }
 
 /// Enumerates the actions that can be taken on a column during temporal memory processing.
+#[derive(Debug)]
 pub enum Action {
     Activate,
     Burst,
@@ -85,16 +86,33 @@ pub enum Action {
 }
 
 /// Holds the parameters required for the Temporal Memory algorithm's learning and activation.
-#[derive(Clone, Debug)]
+#[derive(Debug)]
 pub struct TemporalMemoryParams {
+    /// The minimum number of active connected synapses required for a segment to be considered active.
     pub activation_threshold: usize,
+
+    /// The permanence value threshold above which a synapse is considered connected.
     pub connected_permanence: f64,
+    
+    /// The minimum number of active potential synapses required for a segment to be eligible for learning.
     pub learning_threshold: usize,
+    
+    /// The initial permanence value assigned to newly created synapses.
     pub initial_permanence: f64,
+    
+    /// The amount by which a synapse's permanence is increased when its presynaptic cell was active.
     pub permanence_increment: f64,
+    
+    /// The amount by which a synapse's permanence is decreased when its presynaptic cell was inactive.
     pub permanence_decrement: f64,
+    
+    /// The decrement applied to synapses in segments that incorrectly predicted cell activation.
     pub predicted_decrement: f64,
+    
+    /// The desired sample size for synapses on a segment, influencing how many synapses are grown.
     pub synapse_sample_size: usize,
+
+    /// A flag indicating whether synaptic learning (adjusting permanence values) is enabled.
     pub learning_enabled: bool,
 }
 
@@ -104,36 +122,69 @@ pub struct TemporalMemoryParams {
 /// based on past patterns, and adapting synapse permanences through Hebbian-like learning rules. It operates in
 /// discrete time steps and incorporates phases such as activating predicted cells, bursting columns without predictions,
 /// and punishing erroneous predictions to gradually learn the temporal structure of the input data.
+#[derive(Debug)]
 pub struct TemporalMemory {
+    /// Holds the collection of columns, where each column contains multiple cells.
     columns: Vec<Column>,
-    // Learning and activation parameters.
+
+    /// The minimum number of active connected synapses required for a segment to be considered active.
     activation_threshold: usize,
+
+    /// The permanence value threshold above which a synapse is deemed connected.
     connected_permanence: f64,
+
+    /// The minimum number of active potential synapses needed for a segment to be eligible for learning.
     learning_threshold: usize,
+
+    /// The initial permanence (strength) value assigned to newly created synapses.
     initial_permanence: f64,
+
+    /// The increment value used to increase a synapse's permanence when its presynaptic cell was active.
     permanence_increment: f64,
+    
+    /// The decrement value used to decrease a synapse's permanence when its presynaptic cell was inactive.
     permanence_decrement: f64,
+    
+    /// The decrement value applied to synapses in segments that incorrectly predicted cell activation.
     predicted_decrement: f64,
+    
+    /// The desired sample size for synapses on a segment, influencing how many new synapses to grow.
     synapse_sample_size: usize,
+   
+    /// A flag indicating whether the learning (adjusting synapse permanences) is enabled.
     learning_enabled: bool,
 
-    // State from previous time step (t-1)
+    /// Set of cell addresses that were active in the previous time step.
     prev_active_cells: FxHashSet<CellAddress>,
+    
+    /// Set of cell addresses that were chosen as winner cells in the previous time step.
     prev_winner_cells: FxHashSet<CellAddress>,
-    prev_active_segments: FxHashSet<(CellAddress, usize)>, // (cell address, segment index)
+   
+    /// Set of segments (identified by cell address and segment index) that were active in the previous time step.
+    prev_active_segments: FxHashSet<(CellAddress, usize)>,
+    
+    /// Set of segments that met the matching criteria (eligible for learning) in the previous time step.
     prev_matching_segments: FxHashSet<(CellAddress, usize)>,
 
-    // Current state (t)
+    /// Set of cell addresses that are active in the current time step.
     active_cells: FxHashSet<CellAddress>,
+    
+    /// Set of cell addresses that are selected as winners in the current time step.
     winner_cells: FxHashSet<CellAddress>,
+    
+    /// Set of segments (cell address, segment index) that are active in the current time step.
     active_segments: FxHashSet<(CellAddress, usize)>,
+    
+    /// Set of segments that meet the learning threshold criteria in the current time step.
     matching_segments: FxHashSet<(CellAddress, usize)>,
-    // For each segment, record the number of active potential synapses.
+
+    /// A mapping from each segment (cell address and segment index) to the number of active potential synapses.
     num_active_potential_synapses: FxHashMap<(CellAddress, usize), usize>,
 
-    // Current time step.
+    /// The current time step counter.
     t: u64,
 
+    /// Random number generator.
     rand: StdRng,
 }
 

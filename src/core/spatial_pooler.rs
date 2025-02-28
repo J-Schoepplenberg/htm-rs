@@ -125,6 +125,7 @@ pub struct SpatialPooler {
 
 impl SpatialPooler {
     /// Creates a new `SpatialPooler` with the given input and column dimensions.
+    #[inline]
     pub fn new(input_dimensions: Vec<usize>, column_dimensions: Vec<usize>) -> Self {
         let num_columns = column_dimensions.iter().product();
         let num_inputs = input_dimensions.iter().product();
@@ -179,6 +180,7 @@ impl SpatialPooler {
     /// - Ensures `potential_radius` is set to a valid default if unspecified.
     ///
     /// Keeps the SP’s internal parameters consistent after construction.
+    #[inline]
     pub fn post_init(&mut self) {
         self.synapse_permanence_options.below_stimulus_increment =
             self.synapse_permanence_options.connected / 10.0;
@@ -193,6 +195,7 @@ impl SpatialPooler {
     /// - Validates inhibition parameters.
     /// - Generates columns.
     /// - Builds and configures synapses for each column.
+    #[inline]
     pub fn init(&mut self) {
         self.post_init();
         self.gen_columns();
@@ -210,6 +213,7 @@ impl SpatialPooler {
     /// - Updates synapse permance values.
     /// - Updates duty cycles.
     /// - Resets thresholds and inhibition radii periodically.
+    #[inline]
     pub fn compute(&mut self, input_pattern: &[bool], learn: bool) {
         self.update_iteration_number(learn);
         self.calculate_overlaps(input_pattern);
@@ -233,6 +237,7 @@ impl SpatialPooler {
     /// - Ensures permanence values remain within valid bounds and sorts connected synapses.
     ///
     /// Implements Hebbian-like learning that shapes columns towards frequently active inputs.
+    #[inline]
     pub fn adapt_synapses(&mut self, input_pattern: &[bool]) {
         for &col in &self.winner_columns {
             for syn in self.synapses.column_mut(col) {
@@ -256,6 +261,7 @@ impl SpatialPooler {
     /// - Increments the column’s active duty cycle if it’s a winner in the current iteration.
     ///
     /// Duty cycles measure how "healthy" or "engaged" each column is in representing inputs over time.
+    #[inline]
     pub fn update_duty_cycles(&mut self) {
         let period = self.iteration_num.min(self.duty_cycle_period) as f32;
         let factor = (period - 1.0) / period;
@@ -279,6 +285,7 @@ impl SpatialPooler {
     /// - Then re-sorts that column’s synapse by permanence, so that connected synapses come first
     ///
     /// Prevents columns from perpetually remaining low-overlap, giving them a chance to learn and stay relevant.
+    #[inline]
     pub fn bump_up_weak_columns(&mut self) {
         for (col, &overlap_dc) in self.overlap_duty_cycles.iter().enumerate() {
             if self.min_overlap_duty_cycles[col] > overlap_dc {
@@ -300,6 +307,7 @@ impl SpatialPooler {
     /// - If its activity meets or exceeds the min, its boost factor is reset to 1.0.
     ///
     /// Boosting encourages underutilized columns to become active more easily.
+    #[inline]
     pub fn update_boost_factors(&mut self) {
         if self.min_active_duty_cycles.iter().any(|&min| min > 0.0) {
             self.boost_factors
@@ -322,6 +330,7 @@ impl SpatialPooler {
     /// - Sets each column’s minimum duty cycle to a fraction of these maximums.
     ///
     /// Ensures columns remain competitive globally, preventing "dead" columns.
+    #[inline]
     pub fn update_min_duty_cycles(&mut self) {
         let m = self.min_percentage_overlap_duty_cycles
             * self
@@ -341,6 +350,7 @@ impl SpatialPooler {
     /// - Scales overlap values before the inhibition step, so columns with higher boosts have a better chance to win.
     ///
     /// Part of the mechanism that ensures columns that have been "idle" get more opportunities to become winners.
+    #[inline]
     pub fn boost(&mut self, learn: bool) {
         if learn {
             for (overlap, boost) in self.overlaps.iter_mut().zip(self.boost_factors.iter()) {
@@ -353,6 +363,7 @@ impl SpatialPooler {
     /// - Counts how many connected synapses map to an active input bit, storing that count in `self.overlaps[col]`.
     ///
     /// Overlap is the key metric determining a column’s initial activation level before inhibition.
+    #[inline]
     pub fn calculate_overlaps(&mut self, input_pattern: &[bool]) {
         self.overlaps
             .iter_mut()
@@ -370,6 +381,7 @@ impl SpatialPooler {
     /// Increments the global iteration counters, including a separate counter if `learn` is true.
     ///
     /// Tracks how many total iterations vs. learning iterations have occurred for reference and parameter updates.
+    #[inline]
     pub fn update_iteration_number(&mut self, learn: bool) {
         self.iteration_num += 1;
         if learn {
@@ -382,6 +394,7 @@ impl SpatialPooler {
     /// - Truncates the list when overlap < `stimulus_threshold` or once the fraction `density * num_columns` is reached.
     ///
     /// Ensures only a sparse subset of columns with the highest overlaps become active, ignoring local topology.
+    #[inline]
     pub fn inhibit_columns(&mut self) {
         let mut candidates: Vec<_> = (0..self.num_columns).collect();
         candidates
@@ -401,6 +414,7 @@ impl SpatialPooler {
     /// - Initializes each column’s synapses with random permanence values based on `init_connected_percentage`.
     ///
     /// Establishes each column’s initial “potential synapses,” which define where it can learn to connect.
+    #[inline]
     pub fn connect_and_configure_inputs(&mut self) {
         let mut arr = vec![0usize; self.num_inputs];
         for column in 0..self.num_columns {
@@ -427,6 +441,7 @@ impl SpatialPooler {
     /// - Randomly selects `potential_percentage` fraction of them as potential synapses.
     ///
     /// Defines which inputs a column could connect to, controlling local connectivity and receptive fields.
+    #[inline]
     pub fn map_potential(
         &mut self,
         column: usize,
@@ -451,6 +466,7 @@ impl SpatialPooler {
     /// Calculates how many potential synapses a column should have, given the potential radius neighborhood size.
     ///
     /// Ensures each column’s actual synapse count is consistent with the defined fraction of that local neighborhood.
+    #[inline]
     pub fn potential_synapses(&self, input_size: usize) -> usize {
         ((input_size as f64 * self.potential_percentage) + 0.5) as usize
     }
@@ -461,6 +477,7 @@ impl SpatialPooler {
     /// - Clamps the result to the valid input range.
     ///
     /// This "center" determines where the potential radius is anchored for each column, shaping how local the input sampling is.
+    #[inline]
     pub fn map_column(&self, column: usize) -> usize {
         let coords: Vec<usize> = self
             .column_topology
@@ -481,6 +498,7 @@ impl SpatialPooler {
     /// Generates the column objects and places them into `self.columns`.
     ///
     /// Represents the conceptual "slots" that the Spatial Pooler is training to detect features in the input.
+    #[inline]
     pub fn gen_columns(&mut self) {
         self.columns = (0..self.num_columns).map(Column::new).collect();
     }
@@ -488,6 +506,7 @@ impl SpatialPooler {
     /// Reinitializes the Synapses object (i.e., discards and recreates the entire synapse pool).
     ///
     /// Allows the Spatial Pooler to reset or re-generate synapses if needed (e.g., after parameter changes).
+    #[inline]
     pub fn gen_column_potential_synapses(&mut self) {
         self.synapses = Synapses::new(self.num_columns, self.num_inputs);
     }

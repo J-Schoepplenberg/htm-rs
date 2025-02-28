@@ -1,3 +1,11 @@
+//! This example demonstrates how to use the HTM Spatial Pooler and SDR Classifier to classify
+//! handwritten digits from the MNIST dataset. The Spatial Pooler is trained on the MNIST training
+//! set, and the SDR Classifier is trained on the output of the Spatial Pooler. The trained models
+//! are then tested on the MNIST test set.
+//! 
+//! This traditional HTM approach is a baseline for comparison with different techniques and pipelines.
+//! The baseline reaches 95.52% accuracy in this configuration.
+
 use mnist::{Mnist, MnistBuilder};
 use htm_rs::core::{sdr_classifier::SDRClassifier, spatial_pooler::SpatialPooler};
 

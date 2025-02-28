@@ -21,6 +21,7 @@ use std::collections::VecDeque;
 
 /// A small value used to prevent division by zero.
 const EPSILON: f32 = 0.001;
+
 /// A classifier that learns a mapping from a sparse distributed representation (SDR)
 /// to target buckets, with support for multi-step prediction.
 pub struct SDRClassifier {

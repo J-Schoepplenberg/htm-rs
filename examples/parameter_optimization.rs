@@ -1,6 +1,6 @@
+use htm_rs::core::{sdr_classifier::SDRClassifier, spatial_pooler::SpatialPooler};
 use mnist::{Mnist, MnistBuilder};
 use rand::Rng;
-use htm_rs::core::{sdr_classifier::SDRClassifier, spatial_pooler::SpatialPooler};
 
 #[derive(Debug, Copy, Clone)]
 struct HyperParams {

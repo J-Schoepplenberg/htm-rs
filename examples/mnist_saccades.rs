@@ -1,37 +1,36 @@
 //! This example demonstrates how to identify MNIST digits.
 //! The approach reaches around 95.18% accuracy in this configuration.
-//! 
+//!
 //! It implements a hierarchical pipeline for MNIST digit classification
 //! using two layers of spatial poolers followed by an SDR classifier.
-//! 
+//!
 //! MNIST Data:
 //! - The MNIST dataset is loaded with separate training and test sets.
-//! 
+//!
 //! Patch Extraction:
 //! - Each 28x28 image is divided into 49 non-overlapping 4x4 patches.
 //! - Each patch is converted into a 16-bit boolean vector.
 //! - Each bit indicates if the pixel (0-255) exceeds a threshold (127).
-//! 
+//!
 //! First Layer:
 //! - The patches are fed into the first spatial pooler layer.
 //! - It is configured with 16 columns, matching the 4x4 patch structure.
 //! - This produces an SDR in the form of winner column indices.
-//! 
+//!
 //! Aggregation:
 //! - The individual patch SDRs are aggregated back into one 28x28 boolean array.
 //! - This preserves the original spatial arrangement of the image.
-//! 
+//!
 //! Second Layer:
 //! - The aggregated SDR is fed into a second spatial pooler layer.
 //! - Thus, the layer learns higher-level representations by processing the global spatial layout.
-//! 
+//!
 //! SDR Classifier:
 //! - An SDRClassifier is trained on the output of the second spatial pooler.
 //! - It uses the final SDR to predict the digit class for each image.
 
-
-use mnist::{Mnist, MnistBuilder};
 use htm_rs::core::{sdr_classifier::SDRClassifier, spatial_pooler::SpatialPooler};
+use mnist::{Mnist, MnistBuilder};
 
 /// Extracts all 4x4 patches from a 28x28 MNIST image.
 /// Returns 49 patches (7x7), each 16 bits in length (4x4 = 16).
@@ -43,7 +42,7 @@ fn extract_4x4_patches(image: &[u8]) -> Vec<Vec<bool>> {
     for pr in 0..patch_rows {
         for pc in 0..patch_cols {
             let mut patch = Vec::with_capacity(16);
-            
+
             for r in 0..4 {
                 for c in 0..4 {
                     let row = pr * 4 + r;
@@ -116,7 +115,9 @@ fn main() {
 
     spatial_pooler_1.potential_radius = spatial_pooler_1.num_inputs as i32;
     spatial_pooler_1.synapse_permanence_options.active_increment = 0.001;
-    spatial_pooler_1.synapse_permanence_options.inactive_decrement = 0.01;
+    spatial_pooler_1
+        .synapse_permanence_options
+        .inactive_decrement = 0.01;
     spatial_pooler_1.density = 0.6;
     spatial_pooler_1.stimulus_threshold = 1.0;
     spatial_pooler_1.synapse_permanence_options.connected = 0.4;
@@ -128,10 +129,12 @@ fn main() {
     println!("Initializing Spatial Pooler 2...");
 
     let mut spatial_pooler_2 = SpatialPooler::new(vec![28 * 28], vec![64 * 64 * 4]);
-    
+
     spatial_pooler_2.potential_radius = spatial_pooler_2.num_inputs as i32;
     spatial_pooler_2.synapse_permanence_options.active_increment = 0.001;
-    spatial_pooler_2.synapse_permanence_options.inactive_decrement = 0.01;
+    spatial_pooler_2
+        .synapse_permanence_options
+        .inactive_decrement = 0.01;
     spatial_pooler_2.stimulus_threshold = 2.9;
     spatial_pooler_2.synapse_permanence_options.connected = 0.2;
     spatial_pooler_2.synapse_permanence_options.max = 0.2;

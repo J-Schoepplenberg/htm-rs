@@ -449,11 +449,9 @@ impl SpatialPooler {
         into: &mut [usize],
     ) -> Range<usize> {
         let center = self.map_column(column);
-        let elements_around_center = self.input_topology.neighborhood(
-            center,
-            self.potential_radius as usize,
-            wrap_around,
-        );
+        let elements_around_center =
+            self.input_topology
+                .neighborhood(center, self.potential_radius as usize, wrap_around);
         let lower_bound = elements_around_center.size_hint().0;
         let size = self.potential_synapses(lower_bound);
         let mut sample = elements_around_center.choose_multiple(&mut self.rand, size);

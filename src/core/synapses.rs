@@ -1,18 +1,18 @@
 //! A `Synapse` models a single connection between a `Column` and an input bit.
 //! Each synapse links exactly one input index to one column.
-//! 
+//!
 //! If the permanence is above a certain threshold, the synapse is considered "connected".
 //! During learning, permanence is increases or decreased depening on whether the corresponding
 //! input bit was active. A connected synapse counts toward the column's overlap score.
-//! 
-//! The centralized `Synapses` struct is a pool that stores all synapses for all columns 
-//! in a single contiguous vec (array). Each column's synapses occupy a contiguous subrange 
+//!
+//! The centralized `Synapses` struct is a pool that stores all synapses for all columns
+//! in a single contiguous vec (array). Each column's synapses occupy a contiguous subrange
 //! within this array. The column keeps track of how many synapses it owns and where they lie.
-//! 
+//!
 //! This design allows efficient iteration over synapses (e.g. for updating),
-//! quick global operatins (e.g. sorting connected vs. disconnected synapses), 
+//! quick global operatins (e.g. sorting connected vs. disconnected synapses),
 //! compact memory usage, and simple indexing.
-//! 
+//!
 //! The pool exposes methods to initialize a column's synapses with randomized permanence values,
 //! sort the synapses of a column so connected synapses are at the front of its subrange,
 //! and update or trim synapse permanence values.

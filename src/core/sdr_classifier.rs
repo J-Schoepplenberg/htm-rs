@@ -150,10 +150,10 @@ impl SDRClassifier {
         }
 
         if infer {
-            return self.infer(pattern);
+            self.infer(pattern)
         } else {
-            return vec![(0, vec![0.0])];
-        };
+            vec![(0, vec![0.0])]
+        }
     }
 
     /// Performs inference over all prediction steps.

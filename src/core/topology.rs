@@ -1,5 +1,5 @@
-//! Topology represents an N-dimensional space through a list of dimensions and corresponding stride values. 
-//! The struct provides methods to convert between linear indices and coordinates in this N-dimensional space, 
+//! Topology represents an N-dimensional space through a list of dimensions and corresponding stride values.
+//! The struct provides methods to convert between linear indices and coordinates in this N-dimensional space,
 //! and also offers a way to iterate over neighborhoods of that space within a radius of a given center index.
 //!
 //! In the HTM Spatial Pooler context, the input and column spaces are N-dimensional.
@@ -107,7 +107,7 @@ pub struct NeighborhoodIter<'a> {
     wrapping: bool,
 }
 
-impl<'a> Iterator for NeighborhoodIter<'a> {
+impl Iterator for NeighborhoodIter<'_> {
     type Item = usize;
 
     /// Returns the next index within the neighborhood. When all indices have been visited, it returns `None`.
@@ -134,9 +134,11 @@ impl<'a> Iterator for NeighborhoodIter<'a> {
             if current[i] + 1 < self.bounds[i].1 {
                 current[i] += 1;
 
-                for j in i + 1..current.len() {
-                    current[j] = self.bounds[j].0;
-                }
+                current
+                    .iter_mut()
+                    .enumerate()
+                    .skip(i + 1)
+                    .for_each(|(j, item)| *item = self.bounds[j].0);
 
                 return Some(result);
             }

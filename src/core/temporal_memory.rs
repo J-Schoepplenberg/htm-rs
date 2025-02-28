@@ -1,44 +1,44 @@
 //! The `TemporalMemory` module implements a core component of HTM that learns and predicts temporal sequences.
 //!
-//! At a high level, it models a set of columns, where each column contains multiple cells. 
+//! At a high level, it models a set of columns, where each column contains multiple cells.
 //! Each cell can form multiple dendritic segments, which in turn consist of synapses.
 //! Unfortunately, it is much slower in practice than spatial pooling.
-//! 
+//!
 //! Column:
-//! - A group of cells that share common input. 
+//! - A group of cells that share common input.
 //! - Each column processes feed-forward signals and contributes to forming sparse distributed representations.
-//! 
-//! Cell: 
-//! - An individual processing unit within a column. 
+//!
+//! Cell:
+//! - An individual processing unit within a column.
 //! - Cells are responsible for representing different contexts of the same input.
-//! 
+//!
 //! Dendritic Segment (Segment):
-//! - A cluster of synapses on a cell that detects patterns of activity from other cells. 
+//! - A cluster of synapses on a cell that detects patterns of activity from other cells.
 //! - Each segment learns to recognize sequences by forming connections to presynaptic cells.
-//! 
-//! Synapse: 
-//! - A connection from a presynaptic cell (i.e., a cell that provided input) to a dendritic segment. 
+//!
+//! Synapse:
+//! - A connection from a presynaptic cell (i.e., a cell that provided input) to a dendritic segment.
 //! - Each synapse has a permanence value that indicates the strength of the connection and determines if the connection is active.
-//! 
-//! Presynaptic Cell: 
-//! - A cell that provides input to another cell via a synapse. 
+//!
+//! Presynaptic Cell:
+//! - A cell that provides input to another cell via a synapse.
 //! - In the context of temporal memory, presynaptic activity is used to predict future cell activations.
-//! 
+//!
 //! Bursting:
-//! - When a column becomes active due to feed-forward input but no cell was correctly predicted, all cells in the column are activated. 
+//! - When a column becomes active due to feed-forward input but no cell was correctly predicted, all cells in the column are activated.
 //! - This process allows the system to learn new sequences and is called bursting.
-//! 
-//! Winner Cells/Columns: 
+//!
+//! Winner Cells/Columns:
 //! - Cells/columns that have been selected based on their predictive state or through bursting, which then guide the learning process.
 //!
 //! How It Works:
-//! - The Temporal Memory processes input in discrete time steps. 
+//! - The Temporal Memory processes input in discrete time steps.
 //! - For each time step, it receives a set of active (feed-forward) columns.
-//! - In each active column, it checks if any cell was correctly predicted by an active dendritic segment. 
+//! - In each active column, it checks if any cell was correctly predicted by an active dendritic segment.
 //! - If so, those cells are activated; otherwise, the column bursts.
 //! - The algorithm then updates dendritic segments by reinforcing synapses that correctly predicted activity.
 //! - It also punishes those that did not, following Hebbian-like learning rules.
-//! - Additionally, new synapses may be grown on segments to incorporate previously winning cells, 
+//! - Additionally, new synapses may be grown on segments to incorporate previously winning cells,
 //! - Thus, it is adapting the network to better capture temporal patterns over time.
 
 use fxhash::{FxHashMap, FxHashSet};
@@ -93,22 +93,22 @@ pub struct TemporalMemoryParams {
 
     /// The permanence value threshold above which a synapse is considered connected.
     pub connected_permanence: f64,
-    
+
     /// The minimum number of active potential synapses required for a segment to be eligible for learning.
     pub learning_threshold: usize,
-    
+
     /// The initial permanence value assigned to newly created synapses.
     pub initial_permanence: f64,
-    
+
     /// The amount by which a synapse's permanence is increased when its presynaptic cell was active.
     pub permanence_increment: f64,
-    
+
     /// The amount by which a synapse's permanence is decreased when its presynaptic cell was inactive.
     pub permanence_decrement: f64,
-    
+
     /// The decrement applied to synapses in segments that incorrectly predicted cell activation.
     pub predicted_decrement: f64,
-    
+
     /// The desired sample size for synapses on a segment, influencing how many synapses are grown.
     pub synapse_sample_size: usize,
 
@@ -141,40 +141,40 @@ pub struct TemporalMemory {
 
     /// The increment value used to increase a synapse's permanence when its presynaptic cell was active.
     permanence_increment: f64,
-    
+
     /// The decrement value used to decrease a synapse's permanence when its presynaptic cell was inactive.
     permanence_decrement: f64,
-    
+
     /// The decrement value applied to synapses in segments that incorrectly predicted cell activation.
     predicted_decrement: f64,
-    
+
     /// The desired sample size for synapses on a segment, influencing how many new synapses to grow.
     synapse_sample_size: usize,
-   
+
     /// A flag indicating whether the learning (adjusting synapse permanences) is enabled.
     learning_enabled: bool,
 
     /// Set of cell addresses that were active in the previous time step.
     prev_active_cells: FxHashSet<CellAddress>,
-    
+
     /// Set of cell addresses that were chosen as winner cells in the previous time step.
     prev_winner_cells: FxHashSet<CellAddress>,
-   
+
     /// Set of segments (identified by cell address and segment index) that were active in the previous time step.
     prev_active_segments: FxHashSet<(CellAddress, usize)>,
-    
+
     /// Set of segments that met the matching criteria (eligible for learning) in the previous time step.
     prev_matching_segments: FxHashSet<(CellAddress, usize)>,
 
     /// Set of cell addresses that are active in the current time step.
     active_cells: FxHashSet<CellAddress>,
-    
+
     /// Set of cell addresses that are selected as winners in the current time step.
     winner_cells: FxHashSet<CellAddress>,
-    
+
     /// Set of segments (cell address, segment index) that are active in the current time step.
     active_segments: FxHashSet<(CellAddress, usize)>,
-    
+
     /// Set of segments that meet the learning threshold criteria in the current time step.
     matching_segments: FxHashSet<(CellAddress, usize)>,
 
@@ -366,7 +366,7 @@ impl TemporalMemory {
     /// - Iterates over each cell and its segments in the specified column.
     /// - If a segment was active in the previous time step (i.e., predicted), the cell is marked as active/winner.
     /// - Schedules new synapse growth if the segment has fewer synapses than the desired sample size.
-    /// 
+    ///
     /// If learning is enabled:
     /// - Adjusts the permanence of each synapse in the segment.
     /// - This is based on whether the corresponding presynaptic cell was active previously.
@@ -541,24 +541,28 @@ impl TemporalMemory {
         let column = &self.columns[col_index];
         let mut min_segments = usize::MAX;
         let mut min_cells = Vec::new();
-
+    
         for (idx, cell) in column.cells.iter().enumerate() {
             let seg_count = cell.segments.len();
-            if seg_count < min_segments {
-                min_segments = seg_count;
-                min_cells.clear();
-                min_cells.push(idx);
-            } else if seg_count == min_segments {
-                min_cells.push(idx);
+            match seg_count.cmp(&min_segments) {
+                std::cmp::Ordering::Less => {
+                    min_segments = seg_count;
+                    min_cells.clear();
+                    min_cells.push(idx);
+                },
+                std::cmp::Ordering::Equal => {
+                    min_cells.push(idx);
+                },
+                std::cmp::Ordering::Greater => {},
             }
         }
-
+    
         let cell_idx = if min_cells.len() > 1 {
             min_cells[self.rand.random_range(0..min_cells.len())]
         } else {
             min_cells[0]
         };
-
+    
         CellAddress {
             col: col_index,
             cell: cell_idx,

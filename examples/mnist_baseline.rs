@@ -2,6 +2,8 @@
 //! handwritten digits from the MNIST dataset. The Spatial Pooler is trained on the MNIST training
 //! set, and the SDR Classifier is trained on the output of the Spatial Pooler. The trained models
 //! are then tested on the MNIST test set.
+//! 
+//! Unlike many other machine learning methods, the HTM SP learns on unlabeled data.
 //!
 //! This traditional HTM approach is a baseline for comparison with different techniques and pipelines.
 //! The baseline reaches 95.52% accuracy in this configuration.

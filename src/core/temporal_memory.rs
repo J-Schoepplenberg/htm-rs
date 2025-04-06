@@ -541,7 +541,7 @@ impl TemporalMemory {
         let column = &self.columns[col_index];
         let mut min_segments = usize::MAX;
         let mut min_cells = Vec::new();
-    
+
         for (idx, cell) in column.cells.iter().enumerate() {
             let seg_count = cell.segments.len();
             match seg_count.cmp(&min_segments) {
@@ -549,20 +549,20 @@ impl TemporalMemory {
                     min_segments = seg_count;
                     min_cells.clear();
                     min_cells.push(idx);
-                },
+                }
                 std::cmp::Ordering::Equal => {
                     min_cells.push(idx);
-                },
-                std::cmp::Ordering::Greater => {},
+                }
+                std::cmp::Ordering::Greater => {}
             }
         }
-    
+
         let cell_idx = if min_cells.len() > 1 {
             min_cells[self.rand.random_range(0..min_cells.len())]
         } else {
             min_cells[0]
         };
-    
+
         CellAddress {
             col: col_index,
             cell: cell_idx,
@@ -641,5 +641,27 @@ impl TemporalMemory {
     /// Returns a vector of column indices for winner cells from the previous time step.
     pub fn winner_columns(&self) -> Vec<usize> {
         self.prev_winner_cells.iter().map(|addr| addr.col).collect()
+    }
+
+    /// Returns a vector of cell addresses that are in a predictive state.
+    pub fn predicted_cells(&self) -> Vec<CellAddress> {
+        let mut predicted_set = FxHashSet::default();
+
+        for (cell_addr, _seg_idx) in self.prev_active_segments.iter() {
+            predicted_set.insert(*cell_addr);
+        }
+
+        predicted_set.into_iter().collect()
+    }
+
+    /// Returns a vector of column indices for which at least one cell was predicted.
+    pub fn predicted_columns(&self) -> Vec<usize> {
+        let mut predicted_columns = FxHashSet::default();
+
+        for (cell_addr, _seg_idx) in self.prev_active_segments.iter() {
+            predicted_columns.insert(cell_addr.col);
+        }
+
+        predicted_columns.into_iter().collect()
     }
 }

@@ -87,8 +87,44 @@ fn sdr_overlap(sdr1: &[usize], sdr2: &[usize]) -> usize {
     sdr2.iter().filter(|&&x| set1.contains(&x)).count()
 }
 
+// This function converts a patch’s sparse SDR (list of active indices) into a binary array of length 16.
+fn patch_sdr_to_binary(sdr: &[usize]) -> [bool; PATCH_SIZE * PATCH_SIZE] {
+    let mut binary = [false; PATCH_SIZE * PATCH_SIZE];
+    for &active_index in sdr {
+        // Ensure the index is in range
+        if active_index < PATCH_SIZE * PATCH_SIZE {
+            binary[active_index] = true;
+        }
+    }
+    binary
+}
+
+/// Given the pool of patches (each a tuple of ((x, y), sdr)) sorted in grid order,
+/// reconstruct a global SDR of size 28x28, filling regions not visited with zeros.
+/// If multiple patches cover different parts of the global image, the patch SDR will overwrite that region.
+fn reconstruct_global_sdr(patch_pool: &Vec<((usize, usize), Vec<usize>)>) -> Vec<bool> {
+    // Create a global SDR (a flat vector with IMAGE_DIM * IMAGE_DIM elements) initialized with zeros.
+    let mut global_sdr = vec![false; IMAGE_DIM * IMAGE_DIM];
+
+    // For each patch in the patch pool, "paste" its binary SDR into the global SDR.
+    for &((x, y), ref patch_sdr) in patch_pool.iter() {
+        // Convert the patch SDR (sparse indices) into a binary 4x4 array.
+        let binary_patch = patch_sdr_to_binary(patch_sdr);
+        // Write the patch into the global SDR at position (x, y).
+        for row in 0..PATCH_SIZE {
+            for col in 0..PATCH_SIZE {
+                let global_index = (y + row) * IMAGE_DIM + (x + col);
+                let patch_index = row * PATCH_SIZE + col;
+                global_sdr[global_index] = binary_patch[patch_index];
+            }
+        }
+    }
+
+    global_sdr
+}
+
 /// Visualizes the MNIST image with patch locations drawn.
-fn visualize(image: &[u8], locations: &[(usize, usize)], output_path: &str) {
+fn _visualize(image: &[u8], locations: &[(usize, usize)], output_path: &str) {
     let gray_img = GrayImage::from_vec(IMAGE_DIM as u32, IMAGE_DIM as u32, image.to_vec()).unwrap();
     let mut img = DynamicImage::ImageLuma8(gray_img).to_rgb8();
     let red = Rgb([255, 0, 0]);
@@ -111,28 +147,29 @@ fn main() {
     } = MnistBuilder::new()
         .label_format_digit()
         .training_set_length(10_000)
-        .test_set_length(10)
+        .test_set_length(10_000)
         .finalize();
 
     let training_len = trn_lbl.len();
     let testing_len = tst_lbl.len();
     let image_size = IMAGE_DIM * IMAGE_DIM;
 
-    // Our patch has 16 inputs.
     let input_dimensions = vec![16];
     let column_dimensions = vec![16];
 
-    println!("Initializing Spatial Pooler...");
-    let mut spatial_pooler = SpatialPooler::new(input_dimensions, column_dimensions);
-    spatial_pooler.potential_radius = spatial_pooler.num_inputs as i32;
-    spatial_pooler.synapse_permanence_options.active_increment = 0.001;
-    spatial_pooler.synapse_permanence_options.inactive_decrement = 0.01;
-    spatial_pooler.density = 0.6;
-    spatial_pooler.stimulus_threshold = 1.0;
-    spatial_pooler.synapse_permanence_options.connected = 0.4;
-    spatial_pooler.synapse_permanence_options.max = 1.0;
-    spatial_pooler.potential_percentage = 15.0 / spatial_pooler.potential_radius as f64;
-    spatial_pooler.init();
+    println!("Initializing Spatial Pooler 1...");
+    let mut spatial_pooler_1 = SpatialPooler::new(input_dimensions, column_dimensions);
+    spatial_pooler_1.potential_radius = spatial_pooler_1.num_inputs as i32;
+    spatial_pooler_1.synapse_permanence_options.active_increment = 0.001;
+    spatial_pooler_1
+        .synapse_permanence_options
+        .inactive_decrement = 0.01;
+    spatial_pooler_1.density = 0.6;
+    spatial_pooler_1.stimulus_threshold = 1.0;
+    spatial_pooler_1.synapse_permanence_options.connected = 0.4;
+    spatial_pooler_1.synapse_permanence_options.max = 1.0;
+    spatial_pooler_1.potential_percentage = 15.0 / spatial_pooler_1.potential_radius as f64;
+    spatial_pooler_1.init();
 
     println!("Initializing Temporal Memory...");
     let cells_per_column = 8;
@@ -148,12 +185,28 @@ fn main() {
         learning_enabled: true,
     };
     let mut temporal_memory =
-        TemporalMemory::new(spatial_pooler.num_columns, cells_per_column, tm_params);
+        TemporalMemory::new(spatial_pooler_1.num_columns, cells_per_column, tm_params);
+
+    println!("Initializing Spatial Pooler 2...");
+
+    let mut spatial_pooler_2 = SpatialPooler::new(vec![28 * 28], vec![64 * 64 * 4]);
+
+    spatial_pooler_2.potential_radius = spatial_pooler_2.num_inputs as i32;
+    spatial_pooler_2.synapse_permanence_options.active_increment = 0.001;
+    spatial_pooler_2
+        .synapse_permanence_options
+        .inactive_decrement = 0.01;
+    spatial_pooler_2.stimulus_threshold = 2.9;
+    spatial_pooler_2.synapse_permanence_options.connected = 0.2;
+    spatial_pooler_2.synapse_permanence_options.max = 0.2;
+    spatial_pooler_2.potential_percentage = 15.0 / spatial_pooler_2.potential_radius as f64;
+
+    spatial_pooler_2.init();
 
     println!("Initializing Classifier...");
     let prediction_steps = vec![0];
     let learning_rate = 0.1;
-    let column_size = spatial_pooler.num_columns;
+    let column_size = spatial_pooler_2.num_columns;
     let mut classifier = SDRClassifier::new(prediction_steps, learning_rate, column_size);
 
     println!("Training on {} images...", training_len);
@@ -166,16 +219,16 @@ fn main() {
         let label = trn_lbl[i] as usize;
         let (mut x, mut y) = find_start_point(image);
 
-        let mut pool = Vec::new();
+        let mut patch_pool: Vec<((usize, usize), Vec<usize>)> = Vec::new();
 
         let mut visited: HashSet<(usize, usize)> = HashSet::new();
         visited.insert((x, y));
 
         for _ in 0..MAX_SACCADES {
             let patch = extract_patch(image, x, y);
-            spatial_pooler.compute(&patch, true);
-            temporal_memory.step(&spatial_pooler.winner_columns());
-            pool.push(temporal_memory.winner_columns());
+            spatial_pooler_1.compute(&patch, true);
+            temporal_memory.step(&spatial_pooler_1.winner_columns());
+            patch_pool.push(((x, y), temporal_memory.winner_columns()));
 
             let predicted_sdr = temporal_memory.predicted_columns();
 
@@ -196,8 +249,8 @@ fn main() {
                     continue;
                 }
 
-                spatial_pooler.compute(&candidate_patch, false);
-                let candidate_sdr = spatial_pooler.winner_columns();
+                spatial_pooler_1.compute(&candidate_patch, false);
+                let candidate_sdr = spatial_pooler_1.winner_columns();
                 let overlap = sdr_overlap(&predicted_sdr, &candidate_sdr);
 
                 if overlap > max_overlap {
@@ -224,7 +277,19 @@ fn main() {
             visited.insert((x, y));
         }
 
-        classifier.compute(i as u32, label as usize, &pool.concat(), true, false);
+        patch_pool.sort_by_key(|&((x, y), _)| (y, x));
+
+        let global_sdr = reconstruct_global_sdr(&patch_pool);
+
+        spatial_pooler_2.compute(&global_sdr, true);
+
+        classifier.compute(
+            i as u32,
+            label as usize,
+            &spatial_pooler_2.winner_columns,
+            true,
+            false,
+        );
 
         if (i + 1) % 1000 == 0 {
             println!("Training image {}/{}", i + 1, training_len);
@@ -244,7 +309,7 @@ fn main() {
 
         saccades.clear();
 
-        let mut pool = Vec::new();
+        let mut patch_pool: Vec<((usize, usize), Vec<usize>)> = Vec::new();
 
         let mut visited: HashSet<(usize, usize)> = HashSet::new();
         visited.insert((x, y));
@@ -252,9 +317,9 @@ fn main() {
         for _ in 0..MAX_SACCADES {
             saccades.push((x, y));
             let patch = extract_patch(image, x, y);
-            spatial_pooler.compute(&patch, true);
-            temporal_memory.step(&spatial_pooler.winner_columns());
-            pool.push(temporal_memory.winner_columns());
+            spatial_pooler_1.compute(&patch, false);
+            temporal_memory.step(&spatial_pooler_1.winner_columns());
+            patch_pool.push(((x, y), temporal_memory.winner_columns()));
 
             let predicted_sdr = temporal_memory.predicted_columns();
 
@@ -275,8 +340,8 @@ fn main() {
                     continue;
                 }
 
-                spatial_pooler.compute(&candidate_patch, false);
-                let candidate_sdr = spatial_pooler.winner_columns();
+                spatial_pooler_1.compute(&candidate_patch, false);
+                let candidate_sdr = spatial_pooler_1.winner_columns();
                 let overlap = sdr_overlap(&predicted_sdr, &candidate_sdr);
 
                 if overlap > max_overlap {
@@ -303,12 +368,23 @@ fn main() {
             visited.insert((x, y));
         }
 
-        println!("imgage {}: saccades: {:?}", i, saccades);
-
+        /* println!("imgage {}: saccades: {:?}", i, saccades);
         let filename = format!("saccades_{}.png", i);
-        visualize(image, &saccades, &filename);
+        _visualize(image, &saccades, &filename); */
 
-        let predictions = classifier.compute(i as u32, label as usize, &pool.concat(), false, true);
+        patch_pool.sort_by_key(|&((x, y), _)| (y, x));
+
+        let global_sdr = reconstruct_global_sdr(&patch_pool);
+
+        spatial_pooler_2.compute(&global_sdr, false);
+
+        let predictions = classifier.compute(
+            i as u32,
+            label as usize,
+            &spatial_pooler_2.winner_columns,
+            false,
+            true,
+        );
 
         for &(_step, ref probabilities) in &predictions {
             let prediction = probabilities
@@ -320,6 +396,10 @@ fn main() {
             if prediction == label {
                 correct_predictions += 1;
             }
+        }
+
+        if (i + 1) % 1000 == 0 {
+            println!("Testing image {}/{}", i + 1, testing_len);
         }
     }
 

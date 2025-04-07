@@ -508,4 +508,9 @@ impl SpatialPooler {
     pub fn gen_column_potential_synapses(&mut self) {
         self.synapses = Synapses::new(self.num_columns, self.num_inputs);
     }
+
+    /// Return winner columns.
+    pub fn winner_columns(&self) -> &[usize] {
+        &self.winner_columns
+    }
 }

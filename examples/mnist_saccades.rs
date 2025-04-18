@@ -1,5 +1,31 @@
-use std::collections::HashSet;
+//! Saccadic‑attention HTM pipeline for handwritten‑digit recognition
+//! -----------------------------------------------------------------
+//! 28×28 greyscale digit
+//!         │
+//! step 1:  choose a small “fovea” (4×4 patch) at the digit’s centre of mass
+//!         │
+//! step 2:  encode that patch with a tiny Spatial Pooler (SP₁)
+//!         │
+//! step 3:  feed SP₁ sparse output into a Temporal Memory (TM) → sequence state
+//!         │
+//! step 4:  TM predicts *which patch* is likely to appear next
+//!         │
+//! step 5:  an attention policy scores the 24 candidates around the current
+//!         │     fixation and jumps to the location with maximal overlap
+//!         │     between TM prediction and actual patch code
+//!         │               ↑
+//!         │   loop 4. and 5. up to 49 times   (saccades)
+//!         │
+//! step 6:  OR all visited 4×4 patches into a 28×28 binary canvas
+//!         │
+//! step 7:  encode that canvas with a large Spatial Pooler (SP₂)
+//!         │
+//! step 8:  classify the resulting SDR with an SDRClassifier (supervised)
+//!                ↓
+//!           predicted digit
+//! -----------------------------------------------------------------
 
+use fxhash::FxHashSet;
 use htm_rs::core::{
     sdr_classifier::SDRClassifier,
     spatial_pooler::SpatialPooler,
@@ -8,136 +34,124 @@ use htm_rs::core::{
 use image::{DynamicImage, GrayImage, Rgb};
 use imageproc::{drawing::draw_hollow_rect_mut, rect::Rect};
 use mnist::{Mnist, MnistBuilder};
-use rand::seq::IndexedRandom;
+use std::collections::HashSet;
 
-const MAX_SACCADES: usize = 49;
-const MIN_ACTIVE_PIXELS: usize = 1;
 const IMAGE_DIM: usize = 28;
 const PATCH_SIZE: usize = 4;
+const MAX_SACCADES: usize = 49;
+const MIN_ACTIVE_PIXELS: usize = 1;
 
-/// Extract a single 4x4 patch from a 28x28 MNIST image:
-/// - Assumes (x, y) are grid-aligned (multiples of 4).
-fn extract_patch(image: &[u8], x: usize, y: usize) -> [bool; 16] {
-    let mut patch = [false; 16];
-    for row in 0..PATCH_SIZE {
-        for col in 0..PATCH_SIZE {
-            let pixel = image[(y + row) * IMAGE_DIM + (x + col)];
-            patch[row * PATCH_SIZE + col] = pixel > 127;
+/// Extract a 4×4 boolean patch at (x,y) (top‑left corner, 0‑based).
+fn extract_patch(image: &[u8], x: usize, y: usize) -> [bool; PATCH_SIZE * PATCH_SIZE] {
+    let mut p = [false; PATCH_SIZE * PATCH_SIZE];
+
+    for r in 0..PATCH_SIZE {
+        for c in 0..PATCH_SIZE {
+            p[r * PATCH_SIZE + c] = image[(y + r) * IMAGE_DIM + (x + c)] > 127;
         }
     }
-    patch
+
+    p
 }
 
-/// Finds a starting location for the first patch:
-/// - Scans the image for a pixel above threshold.
-/// - Snaps the coordinate to the nearest 4x4 grid location (i.e. multiples of 4).
-fn find_start_point(image: &[u8]) -> (usize, usize) {
+/// Centre of mass of all on‑pixels.
+fn first_saccade(image: &[u8]) -> (usize, usize) {
+    let mut sx = 0usize;
+    let mut sy = 0usize;
+    let mut n = 0usize;
+
     for y in 0..IMAGE_DIM {
         for x in 0..IMAGE_DIM {
             if image[y * IMAGE_DIM + x] > 127 {
-                // Snap to grid
-                let x_grid = (x / PATCH_SIZE) * PATCH_SIZE;
-                let y_grid = (y / PATCH_SIZE) * PATCH_SIZE;
-                return (
-                    x_grid.min(IMAGE_DIM - PATCH_SIZE),
-                    y_grid.min(IMAGE_DIM - PATCH_SIZE),
-                );
+                sx += x;
+                sy += y;
+                n += 1;
             }
         }
     }
+
+    if n == 0 {
+        return (
+            IMAGE_DIM / 2 - PATCH_SIZE / 2,
+            IMAGE_DIM / 2 - PATCH_SIZE / 2,
+        );
+    }
+
+    let cx = sx / n;
+    let cy = sy / n;
+
     (
-        IMAGE_DIM / 2 - PATCH_SIZE / 2,
-        IMAGE_DIM / 2 - PATCH_SIZE / 2,
+        cx.saturating_sub(PATCH_SIZE / 2)
+            .min(IMAGE_DIM - PATCH_SIZE),
+        cy.saturating_sub(PATCH_SIZE / 2)
+            .min(IMAGE_DIM - PATCH_SIZE),
     )
 }
 
-/// Returns candidate locations for the next patch:
-/// - Only returns grid-aligned candidates that do not exceed the bounds.
+/// generate candidate saccades around (x,y) with strides {±2, ±4} pixels
 fn candidate_locations(x: usize, y: usize) -> Vec<(usize, usize)> {
-    let mut candidates = Vec::new();
-    // Define shifts in multiples of PATCH_SIZE
-    let shifts = [
-        (-1, -1),
-        (-1, 0),
-        (-1, 1),
-        (0, -1),
-        (0, 1),
-        (1, -1),
-        (1, 0),
-        (1, 1),
-    ];
-    for &(dx, dy) in &shifts {
-        // Since our grid steps are PATCH_SIZE, add dx * PATCH_SIZE
-        let new_x = x as isize + dx * PATCH_SIZE as isize;
-        let new_y = y as isize + dy * PATCH_SIZE as isize;
-        if new_x >= 0
-            && new_x <= (IMAGE_DIM - PATCH_SIZE) as isize
-            && new_y >= 0
-            && new_y <= (IMAGE_DIM - PATCH_SIZE) as isize
-        {
-            candidates.push((new_x as usize, new_y as usize));
-        }
-    }
-    candidates
-}
+    const OFFSETS: [isize; 5] = [-4, -2, 0, 2, 4];
+    let mut v = Vec::with_capacity(24);
 
-/// Computes the overlap between two SDRs given as sparse lists of active indices.
-fn sdr_overlap(sdr1: &[usize], sdr2: &[usize]) -> usize {
-    let set1: std::collections::HashSet<_> = sdr1.iter().cloned().collect();
-    sdr2.iter().filter(|&&x| set1.contains(&x)).count()
-}
+    for &dx in &OFFSETS {
+        for &dy in &OFFSETS {
+            if dx == 0 && dy == 0 {
+                continue;
+            }
 
-// This function converts a patch’s sparse SDR (list of active indices) into a binary array of length 16.
-fn patch_sdr_to_binary(sdr: &[usize]) -> [bool; PATCH_SIZE * PATCH_SIZE] {
-    let mut binary = [false; PATCH_SIZE * PATCH_SIZE];
-    for &active_index in sdr {
-        // Ensure the index is in range
-        if active_index < PATCH_SIZE * PATCH_SIZE {
-            binary[active_index] = true;
-        }
-    }
-    binary
-}
+            let nx = x as isize + dx;
+            let ny = y as isize + dy;
 
-/// Given the pool of patches (each a tuple of ((x, y), sdr)) sorted in grid order,
-/// reconstruct a global SDR of size 28x28, filling regions not visited with zeros.
-/// If multiple patches cover different parts of the global image, the patch SDR will overwrite that region.
-fn reconstruct_global_sdr(patch_pool: &Vec<((usize, usize), Vec<usize>)>) -> Vec<bool> {
-    // Create a global SDR (a flat vector with IMAGE_DIM * IMAGE_DIM elements) initialized with zeros.
-    let mut global_sdr = vec![false; IMAGE_DIM * IMAGE_DIM];
-
-    // For each patch in the patch pool, "paste" its binary SDR into the global SDR.
-    for &((x, y), ref patch_sdr) in patch_pool.iter() {
-        // Convert the patch SDR (sparse indices) into a binary 4x4 array.
-        let binary_patch = patch_sdr_to_binary(patch_sdr);
-        // Write the patch into the global SDR at position (x, y).
-        for row in 0..PATCH_SIZE {
-            for col in 0..PATCH_SIZE {
-                let global_index = (y + row) * IMAGE_DIM + (x + col);
-                let patch_index = row * PATCH_SIZE + col;
-                global_sdr[global_index] = binary_patch[patch_index];
+            if nx >= 0
+                && ny >= 0
+                && nx <= (IMAGE_DIM - PATCH_SIZE) as isize
+                && ny <= (IMAGE_DIM - PATCH_SIZE) as isize
+            {
+                v.push((nx as usize, ny as usize));
             }
         }
     }
 
-    global_sdr
+    v
 }
 
-/// Visualizes the MNIST image with patch locations drawn.
-fn _visualize(image: &[u8], locations: &[(usize, usize)], output_path: &str) {
-    let gray_img = GrayImage::from_vec(IMAGE_DIM as u32, IMAGE_DIM as u32, image.to_vec()).unwrap();
-    let mut img = DynamicImage::ImageLuma8(gray_img).to_rgb8();
-    let red = Rgb([255, 0, 0]);
-    for &(x, y) in locations {
-        let rect = Rect::at(x as i32, y as i32).of_size(PATCH_SIZE as u32, PATCH_SIZE as u32);
-        draw_hollow_rect_mut(&mut img, rect, red);
+/// Overlap of two sparse SDRs (sets of indices).
+fn sdr_overlap(a: &[usize], b: &[usize]) -> usize {
+    let sa: HashSet<_> = a.iter().collect();
+    b.iter().filter(|&&i| sa.contains(&i)).count()
+}
+
+/// OR‑write a given patch into the 28×28 canvas.
+fn write_patch(
+    canvas: &mut [bool],
+    x: usize,
+    y: usize,
+    dense_patch: &[bool; PATCH_SIZE * PATCH_SIZE],
+) {
+    for r in 0..PATCH_SIZE {
+        for c in 0..PATCH_SIZE {
+            if dense_patch[r * PATCH_SIZE + c] {
+                canvas[(y + r) * IMAGE_DIM + (x + c)] = true;
+            }
+        }
     }
-    img.save(output_path).unwrap();
+}
+
+/// Draw the given image with red rectangles around the saccades.
+fn _visualize(img: &[u8], saccades: &[(usize, usize)], out: &str) {
+    let g = GrayImage::from_vec(IMAGE_DIM as u32, IMAGE_DIM as u32, img.to_vec()).unwrap();
+    let mut rgb = DynamicImage::ImageLuma8(g).to_rgb8();
+    let red = Rgb([255, 0, 0]);
+
+    for &(x, y) in saccades {
+        let rect = Rect::at(x as i32, y as i32).of_size(PATCH_SIZE as u32, PATCH_SIZE as u32);
+        draw_hollow_rect_mut(&mut rgb, rect, red);
+    }
+
+    rgb.save(out).unwrap();
 }
 
 fn main() {
-    println!("Loading MNIST dataset...");
-
     let Mnist {
         trn_img,
         trn_lbl,
@@ -146,268 +160,213 @@ fn main() {
         ..
     } = MnistBuilder::new()
         .label_format_digit()
-        .training_set_length(10_000)
+        .training_set_length(60_000)
         .test_set_length(10_000)
         .finalize();
 
-    let training_len = trn_lbl.len();
-    let testing_len = tst_lbl.len();
-    let image_size = IMAGE_DIM * IMAGE_DIM;
+    let mut sp1 = SpatialPooler::new(vec![PATCH_SIZE * PATCH_SIZE], vec![16]);
+    sp1.potential_radius = sp1.num_inputs as i32;
+    sp1.synapse_permanence_options.active_increment = 0.001;
+    sp1.synapse_permanence_options.inactive_decrement = 0.01;
+    sp1.synapse_permanence_options.connected = 0.4;
+    sp1.synapse_permanence_options.max = 1.0;
+    sp1.stimulus_threshold = 1.0;
+    sp1.density = 0.6;
+    sp1.potential_percentage = 15.0 / sp1.potential_radius as f64;
+    sp1.init();
 
-    let input_dimensions = vec![16];
-    let column_dimensions = vec![16];
-
-    println!("Initializing Spatial Pooler 1...");
-    let mut spatial_pooler_1 = SpatialPooler::new(input_dimensions, column_dimensions);
-    spatial_pooler_1.potential_radius = spatial_pooler_1.num_inputs as i32;
-    spatial_pooler_1.synapse_permanence_options.active_increment = 0.001;
-    spatial_pooler_1
-        .synapse_permanence_options
-        .inactive_decrement = 0.01;
-    spatial_pooler_1.density = 0.6;
-    spatial_pooler_1.stimulus_threshold = 1.0;
-    spatial_pooler_1.synapse_permanence_options.connected = 0.4;
-    spatial_pooler_1.synapse_permanence_options.max = 1.0;
-    spatial_pooler_1.potential_percentage = 15.0 / spatial_pooler_1.potential_radius as f64;
-    spatial_pooler_1.init();
-
-    println!("Initializing Temporal Memory...");
-    let cells_per_column = 8;
     let tm_params = TemporalMemoryParams {
-        activation_threshold: 5,
+        activation_threshold: 2,
         connected_permanence: 0.5,
         learning_threshold: 4,
         initial_permanence: 0.4,
         permanence_increment: 0.1,
         permanence_decrement: 0.05,
         predicted_decrement: 0.01,
-        synapse_sample_size: 15,
+        synapse_sample_size: 10,
         learning_enabled: true,
     };
-    let mut temporal_memory =
-        TemporalMemory::new(spatial_pooler_1.num_columns, cells_per_column, tm_params);
 
-    println!("Initializing Spatial Pooler 2...");
+    let mut tm = TemporalMemory::new(sp1.num_columns, 8, tm_params);
 
-    let mut spatial_pooler_2 = SpatialPooler::new(vec![28 * 28], vec![64 * 64 * 4]);
+    let mut sp2 = SpatialPooler::new(vec![IMAGE_DIM * IMAGE_DIM], vec![64 * 64 * 4]);
+    sp2.potential_radius = sp2.num_inputs as i32;
+    sp2.synapse_permanence_options.connected = 0.2;
+    sp2.synapse_permanence_options.max = 0.2;
+    sp2.synapse_permanence_options.active_increment = 0.001;
+    sp2.synapse_permanence_options.inactive_decrement = 0.01;
+    sp2.stimulus_threshold = 2.9;
+    sp2.potential_percentage = 15.0 / sp2.potential_radius as f64;
+    sp2.init();
 
-    spatial_pooler_2.potential_radius = spatial_pooler_2.num_inputs as i32;
-    spatial_pooler_2.synapse_permanence_options.active_increment = 0.001;
-    spatial_pooler_2
-        .synapse_permanence_options
-        .inactive_decrement = 0.01;
-    spatial_pooler_2.stimulus_threshold = 2.9;
-    spatial_pooler_2.synapse_permanence_options.connected = 0.2;
-    spatial_pooler_2.synapse_permanence_options.max = 0.2;
-    spatial_pooler_2.potential_percentage = 15.0 / spatial_pooler_2.potential_radius as f64;
+    let mut clf = SDRClassifier::new(vec![0], /* α */ 0.1, sp2.num_columns);
 
-    spatial_pooler_2.init();
+    println!("Training...");
 
-    println!("Initializing Classifier...");
-    let prediction_steps = vec![0];
-    let learning_rate = 0.1;
-    let column_size = spatial_pooler_2.num_columns;
-    let mut classifier = SDRClassifier::new(prediction_steps, learning_rate, column_size);
+    let image_len = IMAGE_DIM * IMAGE_DIM;
+    let mut canvas = vec![false; image_len];
 
-    println!("Training on {} images...", training_len);
+    for (i, (&label, img)) in trn_lbl.iter().zip(trn_img.chunks(image_len)).enumerate() {
+        tm.reset_state();
+        canvas.fill(false);
 
-    // Use random tie-breaking if multiple candidates have the same score.
-    let mut rng = rand::rng();
+        let (mut x, mut y) = first_saccade(img);
 
-    for i in 0..training_len {
-        let image = &trn_img[i * image_size..(i + 1) * image_size];
-        let label = trn_lbl[i] as usize;
-        let (mut x, mut y) = find_start_point(image);
+        let mut visited = FxHashSet::default();
 
-        let mut patch_pool: Vec<((usize, usize), Vec<usize>)> = Vec::new();
-
-        let mut visited: HashSet<(usize, usize)> = HashSet::new();
         visited.insert((x, y));
 
         for _ in 0..MAX_SACCADES {
-            let patch = extract_patch(image, x, y);
-            spatial_pooler_1.compute(&patch, true);
-            temporal_memory.step(&spatial_pooler_1.winner_columns());
-            patch_pool.push(((x, y), temporal_memory.winner_columns()));
+            let patch = extract_patch(img, x, y);
 
-            let predicted_sdr = temporal_memory.predicted_columns();
+            sp1.compute(&patch, true);
+            tm.step(sp1.winner_columns());
 
-            let candidates = candidate_locations(x, y);
-            let mut best_candidates = Vec::new();
-            let mut max_overlap = 0;
+            write_patch(&mut canvas, x, y, &patch);
 
-            for (x1, y1) in candidates {
-                if visited.contains(&(x1, y1)) {
+            let prediction = tm.predicted_columns();
+
+            let mut best_candidate = None;
+            let mut best_score = 0usize;
+
+            for (nx, ny) in candidate_locations(x, y) {
+                if visited.contains(&(nx, ny)) {
                     continue;
                 }
 
-                let candidate_patch = extract_patch(image, x1, y1);
+                let candidate_patch = extract_patch(img, nx, ny);
 
-                let active_count = candidate_patch.iter().filter(|&&bit| bit).count();
-
-                if active_count < MIN_ACTIVE_PIXELS {
+                if candidate_patch.iter().filter(|&&b| b).count() < MIN_ACTIVE_PIXELS {
                     continue;
                 }
 
-                spatial_pooler_1.compute(&candidate_patch, false);
-                let candidate_sdr = spatial_pooler_1.winner_columns();
-                let overlap = sdr_overlap(&predicted_sdr, &candidate_sdr);
+                sp1.compute(&candidate_patch, false);
 
-                if overlap > max_overlap {
-                    max_overlap = overlap;
-                    best_candidates.clear();
-                    best_candidates.push((x1, y1));
-                } else if overlap == max_overlap {
-                    best_candidates.push((x1, y1));
+                let candidate = sp1.winner_columns();
+
+                let candidate_score = if prediction.is_empty() {
+                    candidate_patch.iter().filter(|&&b| b).count()
+                } else {
+                    sdr_overlap(&prediction, candidate)
+                };
+
+                if candidate_score > best_score {
+                    best_candidate = Some((nx, ny));
+                    best_score = candidate_score;
                 }
             }
 
-            if best_candidates.is_empty() {
-                break;
+            match best_candidate {
+                Some(p) => {
+                    x = p.0;
+                    y = p.1;
+                    visited.insert(p);
+                }
+
+                None => break,
             }
-
-            let best_candidate = *best_candidates.choose(&mut rng).unwrap();
-
-            if best_candidate == (x, y) {
-                break;
-            }
-
-            x = best_candidate.0;
-            y = best_candidate.1;
-            visited.insert((x, y));
         }
 
-        patch_pool.sort_by_key(|&((x, y), _)| (y, x));
+        sp2.compute(&canvas, true);
+        clf.compute(i as u32, label as usize, sp2.winner_columns(), true, false);
 
-        let global_sdr = reconstruct_global_sdr(&patch_pool);
-
-        spatial_pooler_2.compute(&global_sdr, true);
-
-        classifier.compute(
-            i as u32,
-            label as usize,
-            &spatial_pooler_2.winner_columns,
-            true,
-            false,
-        );
-
-        if (i + 1) % 1000 == 0 {
-            println!("Training image {}/{}", i + 1, training_len);
+        if (i + 1) % 1_000 == 0 {
+            println!("  trained {}", i + 1);
         }
     }
 
-    println!("Training complete.");
-    println!("Testing on {} images...", testing_len);
+    println!("Testing...");
 
-    let mut correct_predictions = 0;
-    let mut saccades = Vec::new();
+    let mut correct = 0usize;
 
-    for i in 0..testing_len {
-        let image = &tst_img[i * image_size..(i + 1) * image_size];
-        let label = tst_lbl[i] as usize;
-        let (mut x, mut y) = find_start_point(image);
+    for (i, (&label, img)) in tst_lbl.iter().zip(tst_img.chunks(image_len)).enumerate() {
+        tm.reset_state();
+        canvas.fill(false);
 
-        saccades.clear();
+        let (mut x, mut y) = first_saccade(img);
 
-        let mut patch_pool: Vec<((usize, usize), Vec<usize>)> = Vec::new();
+        //let mut saccades = vec![(x, y)];
+        let mut visited = FxHashSet::default();
 
-        let mut visited: HashSet<(usize, usize)> = HashSet::new();
         visited.insert((x, y));
 
         for _ in 0..MAX_SACCADES {
-            saccades.push((x, y));
-            let patch = extract_patch(image, x, y);
-            spatial_pooler_1.compute(&patch, false);
-            temporal_memory.step(&spatial_pooler_1.winner_columns());
-            patch_pool.push(((x, y), temporal_memory.winner_columns()));
+            let patch = extract_patch(img, x, y);
 
-            let predicted_sdr = temporal_memory.predicted_columns();
+            sp1.compute(&patch, false);
+            tm.step(sp1.winner_columns());
 
-            let candidates = candidate_locations(x, y);
-            let mut best_candidates = Vec::new();
-            let mut max_overlap = 0;
+            write_patch(&mut canvas, x, y, &patch);
 
-            for (x1, y1) in candidates {
-                if visited.contains(&(x1, y1)) {
+            let prediction = tm.predicted_columns();
+
+            let mut best_candidate = None;
+            let mut best_score = 0usize;
+
+            for (nx, ny) in candidate_locations(x, y) {
+                if visited.contains(&(nx, ny)) {
                     continue;
                 }
 
-                let candidate_patch = extract_patch(image, x1, y1);
+                let candidate_patch = extract_patch(img, nx, ny);
 
-                let active_count = candidate_patch.iter().filter(|&&bit| bit).count();
-
-                if active_count < MIN_ACTIVE_PIXELS {
+                if candidate_patch.iter().filter(|&&b| b).count() < MIN_ACTIVE_PIXELS {
                     continue;
                 }
 
-                spatial_pooler_1.compute(&candidate_patch, false);
-                let candidate_sdr = spatial_pooler_1.winner_columns();
-                let overlap = sdr_overlap(&predicted_sdr, &candidate_sdr);
+                sp1.compute(&candidate_patch, false);
 
-                if overlap > max_overlap {
-                    max_overlap = overlap;
-                    best_candidates.clear();
-                    best_candidates.push((x1, y1));
-                } else if overlap == max_overlap {
-                    best_candidates.push((x1, y1));
+                let candidate = sp1.winner_columns();
+
+                let candidate_score = if prediction.is_empty() {
+                    candidate_patch.iter().filter(|&&b| b).count()
+                } else {
+                    sdr_overlap(&prediction, candidate)
+                };
+
+                if candidate_score > best_score {
+                    best_candidate = Some((nx, ny));
+                    best_score = candidate_score;
                 }
             }
 
-            if best_candidates.is_empty() {
-                break;
-            }
+            match best_candidate {
+                Some(p) => {
+                    x = p.0;
+                    y = p.1;
+                    visited.insert(p);
+                    //saccades.push((x, y));
+                }
 
-            let best_candidate = *best_candidates.choose(&mut rng).unwrap();
-
-            if best_candidate == (x, y) {
-                break;
-            }
-
-            x = best_candidate.0;
-            y = best_candidate.1;
-            visited.insert((x, y));
-        }
-
-        /* println!("imgage {}: saccades: {:?}", i, saccades);
-        let filename = format!("saccades_{}.png", i);
-        _visualize(image, &saccades, &filename); */
-
-        patch_pool.sort_by_key(|&((x, y), _)| (y, x));
-
-        let global_sdr = reconstruct_global_sdr(&patch_pool);
-
-        spatial_pooler_2.compute(&global_sdr, false);
-
-        let predictions = classifier.compute(
-            i as u32,
-            label as usize,
-            &spatial_pooler_2.winner_columns,
-            false,
-            true,
-        );
-
-        for &(_step, ref probabilities) in &predictions {
-            let prediction = probabilities
-                .iter()
-                .enumerate()
-                .max_by(|a, b| a.1.partial_cmp(b.1).unwrap())
-                .unwrap()
-                .0;
-            if prediction == label {
-                correct_predictions += 1;
+                None => break,
             }
         }
 
-        if (i + 1) % 1000 == 0 {
-            println!("Testing image {}/{}", i + 1, testing_len);
+        sp2.compute(&canvas, false);
+
+        let probabilities =
+            clf.compute(i as u32, label as usize, sp2.winner_columns(), false, true);
+            
+        let predicted_label = probabilities[0]
+            .1
+            .iter()
+            .enumerate()
+            .max_by(|a, b| a.1.partial_cmp(b.1).unwrap())
+            .unwrap()
+            .0;
+
+        if predicted_label == label as usize {
+            correct += 1;
+        }
+
+        /* let file_name = format!("mnist_wtf_{}.png", i);
+        _visualize(img, &saccades, &file_name); */
+
+        if (i + 1) % 1_000 == 0 {
+            println!("  tested {}", i + 1);
         }
     }
 
-    println!("Testing complete.");
-    println!(
-        "Accuracy: {:.2}%, Total: {} images, Correct: {}",
-        100.0 * (correct_predictions as f32 / testing_len as f32),
-        testing_len,
-        correct_predictions
-    );
+    let acc = 100.0 * correct as f32 / 10_000.0;
+    println!("Accuracy: {:.2}%  ({} / 10000)", acc, correct);
 }

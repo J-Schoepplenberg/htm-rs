@@ -238,6 +238,23 @@ impl TemporalMemory {
         }
     }
 
+    /// Resets the state of the Temporal Memory:
+    /// - Learned sequences are retained, but the current state is cleared.
+    /// - Should be used when a new sequence is started.
+    #[inline]
+    pub fn reset_state(&mut self) {
+        self.prev_active_cells.clear();
+        self.prev_winner_cells.clear();
+        self.prev_active_segments.clear();
+        self.prev_matching_segments.clear();
+        self.active_cells.clear();
+        self.winner_cells.clear();
+        self.active_segments.clear();
+        self.matching_segments.clear();
+        self.num_active_potential_synapses.clear();
+        self.t = 0;
+    }
+
     /// Executes one time step of the Temporal Memory algorithm.
     ///
     /// - Converts the list of active (feed-forward) columns into a set for rapid lookup.

@@ -17,6 +17,7 @@
 //! - Sums weights from active bits for each bucket, squares activations and normalizes them.
 //! - This emphasizes strong activation values and yiels a probability distribution (sums to 1).
 
+use serde::{Deserialize, Serialize};
 use std::collections::VecDeque;
 
 /// A small value used to prevent division by zero.
@@ -24,6 +25,7 @@ const EPSILON: f32 = 0.001;
 
 /// A classifier that learns a mapping from a sparse distributed representation (SDR)
 /// to target buckets, with support for multi-step prediction.
+#[derive(Serialize, Deserialize)]
 pub struct SDRClassifier {
     /// Learning rate for weight updates.
     alpha: f32,

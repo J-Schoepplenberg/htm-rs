@@ -1,6 +1,6 @@
 use htm_rs::core::{sdr_classifier::SDRClassifier, spatial_pooler::SpatialPooler};
 use mnist::{Mnist, MnistBuilder};
-use rand::Rng;
+use rand::{rngs::StdRng, Rng, SeedableRng};
 
 #[derive(Debug, Copy, Clone)]
 struct HyperParams {
@@ -26,6 +26,8 @@ fn evaluate_model(
     tst_img: &[u8],
     tst_lbl: &[u8],
 ) -> f32 {
+    let mut rand = StdRng::from_seed([42u8; 32]);
+
     let training_len = trn_lbl.len();
     let testing_len = tst_lbl.len();
     let image_size = 28 * 28;
@@ -45,7 +47,7 @@ fn evaluate_model(
     sp.synapse_permanence_options.connected = hyper.connected;
     sp.synapse_permanence_options.max = hyper.max;
     sp.potential_percentage = hyper.potential_percentage_factor / sp.potential_radius as f64;
-    sp.init();
+    sp.init(&mut rand);
 
     // Initialize the classifier.
     let prediction_steps = vec![0];

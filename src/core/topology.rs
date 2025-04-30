@@ -7,12 +7,13 @@
 //! Topology helps manage the relationship between array-like indices and coordinates in these spaces.
 //! It also enables arbitrary number of dimensions by keeping track of each dimension size and strides.
 
+use serde::{Deserialize, Serialize};
 use std::cmp::{max, min};
 
 /// Represents the shape of an N-dimensional space, along with precomputed stride values for
 /// linear index conversions. The `dims` field stores the size of each dimension, while `strides`
 /// stores the cumulative product of dimension sizes to enable fast index calculations.
-#[derive(Debug)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct Topology {
     dims: Vec<usize>,
     strides: Vec<usize>,

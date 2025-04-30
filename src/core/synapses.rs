@@ -18,10 +18,11 @@
 //! and update or trim synapse permanence values.
 
 use rand::Rng;
+use serde::{Deserialize, Serialize};
 use std::ops::Range;
 
 /// A synapse connecting an input index with an associated permanence value.
-#[derive(Debug, Default, Clone, Copy)]
+#[derive(Debug, Default, Clone, Copy, Serialize, Deserialize)]
 pub struct Synapse {
     /// Points to which input bit this synapse connects to.
     pub index: isize,
@@ -31,7 +32,7 @@ pub struct Synapse {
 }
 
 /// Options governing how synapse permanence is adjusted.
-#[derive(Debug)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct SynapsePermenenceOptions {
     pub inactive_decrement: f32,
     pub active_increment: f32,
@@ -44,7 +45,7 @@ pub struct SynapsePermenenceOptions {
 
 /// A flat pool of potential synapses for all columns.
 /// Each column is allotted a contiguous region in the internal synapses vector.
-#[derive(Debug)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct Synapses {
     /// All potential synapses for each column.
     synapses: Vec<Synapse>,

@@ -43,42 +43,43 @@
 
 use fxhash::{FxHashMap, FxHashSet};
 use rand::prelude::*;
+use serde::{Deserialize, Serialize};
 use std::mem;
 
 /// Represents an address that uniquely identifies a cell by its column and cell indices.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct CellAddress {
     col: usize,
     cell: usize,
 }
 
 /// Represents a synapse that connects a segment to a presynaptic cell, holding a permanence value.
-#[derive(Debug)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct Synapse {
     presynaptic_cell: CellAddress,
     permanence: f64,
 }
 
 /// Represents a dendritic segment (or distal segment) which contains a list of synapses and belongs to a cell.
-#[derive(Debug)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct Segment {
     synapses: Vec<Synapse>,
 }
 
 /// Represents a cell that contains one or more dendritic segments.
-#[derive(Debug)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct Cell {
     segments: Vec<Segment>,
 }
 
 /// Represents a column which is a group of cells.
-#[derive(Debug)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct Column {
     cells: Vec<Cell>,
 }
 
 /// Enumerates the actions that can be taken on a column during temporal memory processing.
-#[derive(Debug)]
+#[derive(Debug, Serialize, Deserialize)]
 pub enum Action {
     Activate,
     Burst,
@@ -86,7 +87,7 @@ pub enum Action {
 }
 
 /// Holds the parameters required for the Temporal Memory algorithm's learning and activation.
-#[derive(Debug)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct TemporalMemoryParams {
     /// The minimum number of active connected synapses required for a segment to be considered active.
     pub activation_threshold: usize,
@@ -122,7 +123,7 @@ pub struct TemporalMemoryParams {
 /// based on past patterns, and adapting synapse permanences through Hebbian-like learning rules. It operates in
 /// discrete time steps and incorporates phases such as activating predicted cells, bursting columns without predictions,
 /// and punishing erroneous predictions to gradually learn the temporal structure of the input data.
-#[derive(Debug)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct TemporalMemory {
     /// Holds the collection of columns, where each column contains multiple cells.
     columns: Vec<Column>,
@@ -183,9 +184,6 @@ pub struct TemporalMemory {
 
     /// The current time step counter.
     t: u64,
-
-    /// Random number generator.
-    rand: StdRng,
 }
 
 impl TemporalMemory {
@@ -234,7 +232,6 @@ impl TemporalMemory {
                 Default::default(),
             ),
             t: 0,
-            rand: StdRng::from_seed([42u8; 32]),
         }
     }
 
@@ -266,7 +263,7 @@ impl TemporalMemory {
     /// - Evaluates segments across all cells to update active and matching segment sets based on active synapse counts.
     /// - Prepares the state for the next time step by swapping current and previous state variables.
     #[inline]
-    pub fn step(&mut self, active_columns: &[usize]) {
+    pub fn step(&mut self, active_columns: &[usize], rand: &mut StdRng) {
         let active_column_set: FxHashSet<usize> = active_columns.iter().copied().collect();
         let mut actions = Vec::with_capacity(active_columns.len() * 2);
 
@@ -321,8 +318,8 @@ impl TemporalMemory {
 
         for (col_index, action) in actions {
             match action {
-                Action::Activate => self.activate_predicted_column(col_index),
-                Action::Burst => self.burst_column(col_index),
+                Action::Activate => self.activate_predicted_column(col_index, rand),
+                Action::Burst => self.burst_column(col_index, rand),
                 Action::Punish => self.punish_predicted_column(col_index),
             }
         }
@@ -388,7 +385,7 @@ impl TemporalMemory {
     /// - Adjusts the permanence of each synapse in the segment.
     /// - This is based on whether the corresponding presynaptic cell was active previously.
     #[inline]
-    pub fn activate_predicted_column(&mut self, col_index: usize) {
+    pub fn activate_predicted_column(&mut self, col_index: usize, rand: &mut StdRng) {
         let mut grow_requests = Vec::new();
         let column = &mut self.columns[col_index];
 
@@ -431,7 +428,7 @@ impl TemporalMemory {
         }
 
         for (addr, seg_idx, count) in grow_requests {
-            self.grow_synapses(addr, seg_idx, count);
+            self.grow_synapses(addr, seg_idx, count, rand);
         }
     }
 
@@ -441,7 +438,7 @@ impl TemporalMemory {
     /// - If no matching segment exists, selects the least used cell and (if learning is enabled) grows a new segment.
     /// - Adjusts synapse permanence for the chosen segment and grows additional synapses if needed.
     #[inline]
-    pub fn burst_column(&mut self, col_index: usize) {
+    pub fn burst_column(&mut self, col_index: usize, rand: &mut StdRng) {
         let column = &mut self.columns[col_index];
         let cells_len = column.cells.len();
 
@@ -479,7 +476,7 @@ impl TemporalMemory {
         }
 
         if winner.is_none() {
-            let cell_addr = self.least_used_cell(col_index);
+            let cell_addr = self.least_used_cell(col_index, rand);
             winner = Some(cell_addr);
 
             if self.learning_enabled {
@@ -513,7 +510,7 @@ impl TemporalMemory {
             let new_count = self.synapse_sample_size.saturating_sub(current_active);
 
             if new_count > 0 {
-                self.grow_synapses(winner_addr, seg_idx, new_count);
+                self.grow_synapses(winner_addr, seg_idx, new_count, rand);
             }
         }
     }
@@ -554,7 +551,7 @@ impl TemporalMemory {
     /// - If multiple cells have the same minimum count, one is chosen at random.
     /// - Returns the address of the selected cell.
     #[inline]
-    pub fn least_used_cell(&mut self, col_index: usize) -> CellAddress {
+    pub fn least_used_cell(&mut self, col_index: usize, rand: &mut StdRng) -> CellAddress {
         let column = &self.columns[col_index];
         let mut min_segments = usize::MAX;
         let mut min_cells = Vec::new();
@@ -575,7 +572,7 @@ impl TemporalMemory {
         }
 
         let cell_idx = if min_cells.len() > 1 {
-            min_cells[self.rand.random_range(0..min_cells.len())]
+            min_cells[rand.random_range(0..min_cells.len())]
         } else {
             min_cells[0]
         };
@@ -611,13 +608,14 @@ impl TemporalMemory {
         cell_addr: CellAddress,
         seg_idx: usize,
         mut new_synapse_count: usize,
+        rand: &mut StdRng,
     ) {
         if new_synapse_count == 0 || self.prev_winner_cells.is_empty() {
             return;
         }
 
         let mut candidates: Vec<CellAddress> = self.prev_winner_cells.iter().copied().collect();
-        candidates.shuffle(&mut self.rand);
+        candidates.shuffle(rand);
 
         if let Some(segment) = self.columns[cell_addr.col].cells[cell_addr.cell]
             .segments

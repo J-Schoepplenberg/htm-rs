@@ -22,16 +22,17 @@ use super::{
 use rand::{
     rngs::StdRng,
     seq::{IteratorRandom, SliceRandom},
-    SeedableRng,
 };
+use serde::{Deserialize, Serialize};
 use std::ops::Range;
 
 /// The SpatialPooler manages a set of columns that compete to represent the input space.
 /// It computes overlaps, applies inhibition, boosts weak columns, and adapts synapses during learning.
 /// Synapse management is performed via the embedded `Synapses` pool.
+#[derive(Serialize, Deserialize)]
 pub struct SpatialPooler {
     /// A seeded pseudo-random number generator for reproducible randomness (e.g., synapse initialization).
-    pub rand: StdRng,
+    //pub rand: StdRng,
 
     /// The total number of compute iterations performed so far (whether learning or not).
     pub iteration_num: u32,
@@ -163,7 +164,6 @@ impl SpatialPooler {
             input_topology,
             columns: Vec::with_capacity(num_columns),
             synapses: Synapses::new(num_columns, num_inputs),
-            rand: StdRng::from_seed([42u8; 32]),
             overlap_duty_cycles: vec![0.0; num_columns],
             active_duty_cycles: vec![0.0; num_columns],
             min_overlap_duty_cycles: vec![0.0; num_columns],
@@ -196,11 +196,11 @@ impl SpatialPooler {
     /// - Generates columns.
     /// - Builds and configures synapses for each column.
     #[inline]
-    pub fn init(&mut self) {
+    pub fn init(&mut self, rand: &mut StdRng) {
         self.post_init();
         self.gen_columns();
         self.gen_column_potential_synapses();
-        self.connect_and_configure_inputs();
+        self.connect_and_configure_inputs(rand);
     }
 
     /// Processes the current `input_vector`:
@@ -415,16 +415,16 @@ impl SpatialPooler {
     ///
     /// Establishes each column’s initial “potential synapses,” which define where it can learn to connect.
     #[inline]
-    pub fn connect_and_configure_inputs(&mut self) {
+    pub fn connect_and_configure_inputs(&mut self, rand: &mut StdRng) {
         let mut arr = vec![0usize; self.num_inputs];
         for column in 0..self.num_columns {
-            let range = self.map_potential(column, true, &mut arr);
+            let range = self.map_potential(column, true, &mut arr, rand);
             self.synapses.init_column(
                 column,
                 &arr[range],
                 self.init_connected_percentage,
                 &self.synapse_permanence_options,
-                &mut self.rand,
+                rand,
             );
             self.synapses.update_column_permanences(
                 column,
@@ -447,6 +447,7 @@ impl SpatialPooler {
         column: usize,
         wrap_around: bool,
         into: &mut [usize],
+        rand: &mut StdRng,
     ) -> Range<usize> {
         let center = self.map_column(column);
         let elements_around_center =
@@ -454,8 +455,8 @@ impl SpatialPooler {
                 .neighborhood(center, self.potential_radius as usize, wrap_around);
         let lower_bound = elements_around_center.size_hint().0;
         let size = self.potential_synapses(lower_bound);
-        let mut sample = elements_around_center.choose_multiple(&mut self.rand, size);
-        sample.shuffle(&mut self.rand);
+        let mut sample = elements_around_center.choose_multiple(rand, size);
+        sample.shuffle(rand);
         let len = sample.len();
         into[..len].copy_from_slice(&sample);
         0..len

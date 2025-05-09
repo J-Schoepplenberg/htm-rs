@@ -1,87 +1,50 @@
-//! This example demonstrates how to identify MNIST digits.
-//! The approach reaches around 95.18% accuracy in this configuration.
-//!
-//! It implements a hierarchical pipeline for MNIST digit classification
-//! using two layers of spatial poolers followed by an SDR classifier.
-//!
-//! MNIST Data:
-//! - The MNIST dataset is loaded with separate training and test sets.
-//!
-//! Patch Extraction:
-//! - Each 28x28 image is divided into 49 non-overlapping 4x4 patches.
-//! - Each patch is converted into a 16-bit boolean vector.
-//! - Each bit indicates if the pixel (0-255) exceeds a threshold (127).
-//!
-//! First Layer:
-//! - The patches are fed into the first spatial pooler layer.
-//! - It is configured with 16 columns, matching the 4x4 patch structure.
-//! - This produces an SDR in the form of winner column indices.
-//!
-//! Aggregation:
-//! - The individual patch SDRs are aggregated back into one 28x28 boolean array.
-//! - This preserves the original spatial arrangement of the image.
-//!
-//! Second Layer:
-//! - The aggregated SDR is fed into a second spatial pooler layer.
-//! - Thus, the layer learns higher-level representations by processing the global spatial layout.
-//!
-//! SDR Classifier:
-//! - An SDRClassifier is trained on the output of the second spatial pooler.
-//! - It uses the final SDR to predict the digit class for each image.
-
 use htm_rs::core::{sdr_classifier::SDRClassifier, spatial_pooler::SpatialPooler};
 use mnist::{Mnist, MnistBuilder};
+use rand::{rngs::StdRng, SeedableRng};
+
+const IMAGE_DIM: usize = 28;
+const PATCH_SIZE: usize = 4;
 
 /// Extracts all 4x4 patches from a 28x28 MNIST image.
 /// Returns 49 patches (7x7), each 16 bits in length (4x4 = 16).
 fn extract_4x4_patches(image: &[u8]) -> Vec<Vec<bool>> {
-    let patch_rows = 7;
-    let patch_cols = 7;
+    let patch_rows = IMAGE_DIM / PATCH_SIZE; // Using constants
+    let patch_cols = IMAGE_DIM / PATCH_SIZE; // Using constants
     let mut patches = Vec::with_capacity(patch_rows * patch_cols);
 
     for pr in 0..patch_rows {
         for pc in 0..patch_cols {
-            let mut patch = Vec::with_capacity(16);
+            let mut patch = Vec::with_capacity(PATCH_SIZE * PATCH_SIZE);
 
-            for r in 0..4 {
-                for c in 0..4 {
-                    let row = pr * 4 + r;
-                    let col = pc * 4 + c;
-                    let pixel = image[row * 28 + col];
+            for r in 0..PATCH_SIZE {
+                for c in 0..PATCH_SIZE {
+                    let row = pr * PATCH_SIZE + r;
+                    let col = pc * PATCH_SIZE + c;
+                    let pixel = image[row * IMAGE_DIM + col];
                     patch.push(pixel > 127);
                 }
             }
-
             patches.push(patch);
         }
     }
-
     patches
 }
 
-/// Converts a vector of patch SDR indices into a global 28x28 boolean array.
-fn indices_to_global_sdr(patches: &Vec<Vec<usize>>) -> [bool; 28 * 28] {
-    let mut result = [false; 28 * 28];
-
-    let patches_per_row = 28 / 4;
-
-    for (patch_index, patch) in patches.iter().enumerate() {
-        let patch_row = patch_index / patches_per_row;
-        let patch_col = patch_index % patches_per_row;
-        let patch_offset = (patch_row * 4 * 28) + (patch_col * 4);
-
-        for &local_index in patch {
-            let local_row = local_index / 4;
-            let local_col = local_index % 4;
-            let global_index = patch_offset + (local_row * 28) + local_col;
-
-            if global_index < 28 * 28 {
-                result[global_index] = true;
+// Added write_patch function from the first snippet
+/// OR-write a given patch into the 28×28 canvas.
+fn write_patch(
+    canvas: &mut [bool],
+    x: usize,
+    y: usize,
+    dense_patch: &[bool], // Changed to &[bool] to accept Vec<bool> slices
+) {
+    for r in 0..PATCH_SIZE {
+        for c in 0..PATCH_SIZE {
+            if dense_patch[r * PATCH_SIZE + c] {
+                canvas[(y + r) * IMAGE_DIM + (x + c)] = true;
             }
         }
     }
-
-    result
 }
 
 fn main() {
@@ -99,19 +62,22 @@ fn main() {
         .test_set_length(10_000)
         .finalize();
 
+    let mut r1 = StdRng::from_seed([42u8; 32]);
+    let mut r2 = StdRng::from_seed([42u8; 32]);
+
     let training_len = trn_lbl.len();
     let testing_len = tst_lbl.len();
 
-    let image_size = 28 * 28;
-    let input_dimensions = vec![16];
-    let column_dimensions = vec![16];
+    let image_len = IMAGE_DIM * IMAGE_DIM;
+    let input_dimensions_sp1 = vec![PATCH_SIZE * PATCH_SIZE];
+    let column_dimensions_sp1 = vec![16];
 
     println!(
-        "Initializing Spatial Pooler with {} columns...",
-        column_dimensions[0]
+        "Initializing Spatial Pooler 1 with {} columns...",
+        column_dimensions_sp1[0]
     );
 
-    let mut spatial_pooler_1 = SpatialPooler::new(input_dimensions, column_dimensions);
+    let mut spatial_pooler_1 = SpatialPooler::new(input_dimensions_sp1, column_dimensions_sp1);
 
     spatial_pooler_1.potential_radius = spatial_pooler_1.num_inputs as i32;
     spatial_pooler_1.synapse_permanence_options.active_increment = 0.001;
@@ -124,11 +90,11 @@ fn main() {
     spatial_pooler_1.synapse_permanence_options.max = 1.0;
     spatial_pooler_1.potential_percentage = 15.0 / spatial_pooler_1.potential_radius as f64;
 
-    spatial_pooler_1.init();
+    spatial_pooler_1.init(&mut r1);
 
     println!("Initializing Spatial Pooler 2...");
 
-    let mut spatial_pooler_2 = SpatialPooler::new(vec![28 * 28], vec![64 * 64 * 4]);
+    let mut spatial_pooler_2 = SpatialPooler::new(vec![IMAGE_DIM * IMAGE_DIM], vec![64 * 64 * 4]); // SP2 input is full canvas
 
     spatial_pooler_2.potential_radius = spatial_pooler_2.num_inputs as i32;
     spatial_pooler_2.synapse_permanence_options.active_increment = 0.001;
@@ -140,37 +106,46 @@ fn main() {
     spatial_pooler_2.synapse_permanence_options.max = 0.2;
     spatial_pooler_2.potential_percentage = 15.0 / spatial_pooler_2.potential_radius as f64;
 
-    spatial_pooler_2.init();
+    spatial_pooler_2.init(&mut r2);
 
     println!("Initializing Classifier...");
 
     let prediction_steps = vec![0];
     let learning_rate = 0.1;
-    let column_size = spatial_pooler_2.num_columns;
+    let column_size_sp2 = spatial_pooler_2.num_columns;
 
-    let mut classifier = SDRClassifier::new(prediction_steps, learning_rate, column_size);
+    let mut classifier = SDRClassifier::new(prediction_steps, learning_rate, column_size_sp2);
 
     println!(
         "Training Spatial Pooler and Classifier on {} images...",
         training_len
     );
 
+    let mut canvas = vec![false; image_len];
+    let patches_per_row_dim = IMAGE_DIM / PATCH_SIZE; // e.g. 28/4 = 7
+
     for i in 0..training_len {
-        let image = &trn_img[i * image_size..(i + 1) * image_size];
+        let image_slice = &trn_img[i * image_len..(i + 1) * image_len];
         let label = trn_lbl[i] as usize;
 
-        let patches = extract_4x4_patches(image);
+        canvas.fill(false);
 
-        let mut batch = Vec::new();
+        let dense_patches = extract_4x4_patches(image_slice);
 
-        for patch in patches {
-            spatial_pooler_1.compute(&patch, true);
-            batch.push(spatial_pooler_1.winner_columns.clone());
+        for (patch_idx, dense_patch) in dense_patches.iter().enumerate() {
+            // Calculate x, y for the current patch based on its index
+            let patch_grid_row = patch_idx / patches_per_row_dim;
+            let patch_grid_col = patch_idx % patches_per_row_dim;
+            let x = patch_grid_col * PATCH_SIZE;
+            let y = patch_grid_row * PATCH_SIZE;
+
+            spatial_pooler_1.compute(dense_patch, true);
+
+            write_patch(&mut canvas, x, y, dense_patch);
         }
 
-        let bools = indices_to_global_sdr(&batch);
-
-        spatial_pooler_2.compute(&bools, true);
+        // SP2 computes on the canvas built from dense patches
+        spatial_pooler_2.compute(&canvas, true);
 
         classifier.compute(
             i as u32,
@@ -179,6 +154,10 @@ fn main() {
             true,
             false,
         );
+
+        if (i + 1) % 1000 == 0 { // Progress indicator
+            println!("  Trained {}/{} images", i + 1, training_len);
+        }
     }
 
     println!("Training complete.");
@@ -191,21 +170,24 @@ fn main() {
     let mut correct_predictions = 0;
 
     for i in 0..testing_len {
-        let image = &tst_img[i * image_size..(i + 1) * image_size];
+        let image_slice = &tst_img[i * image_len..(i + 1) * image_len];
         let label = tst_lbl[i] as usize;
 
-        let patches = extract_4x4_patches(image);
+        canvas.fill(false); // Reset canvas for each image
 
-        let mut batch = Vec::new();
+        let dense_patches = extract_4x4_patches(image_slice);
 
-        for patch in patches {
-            spatial_pooler_1.compute(&patch, false);
-            batch.push(spatial_pooler_1.winner_columns.clone());
+        for (patch_idx, dense_patch) in dense_patches.iter().enumerate() {
+            let patch_grid_row = patch_idx / patches_per_row_dim;
+            let patch_grid_col = patch_idx % patches_per_row_dim;
+            let x = patch_grid_col * PATCH_SIZE;
+            let y = patch_grid_row * PATCH_SIZE;
+
+            spatial_pooler_1.compute(dense_patch, false);
+            write_patch(&mut canvas, x, y, dense_patch);
         }
 
-        let bools = indices_to_global_sdr(&batch);
-
-        spatial_pooler_2.compute(&bools, false);
+        spatial_pooler_2.compute(&canvas, false);
 
         let predictions = classifier.compute(
             i as u32,
@@ -226,6 +208,9 @@ fn main() {
             if prediction == label {
                 correct_predictions += 1;
             }
+        }
+        if (i + 1) % 1000 == 0 { // Progress indicator
+            println!("  Tested {}/{} images", i + 1, testing_len);
         }
     }
 

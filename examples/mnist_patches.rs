@@ -1,3 +1,6 @@
+//! This example reaches 95.55% accuracy on the MNIST dataset.
+//! It uses 4x4 patch size and a 7x7 grid of non-overlapping patches.
+
 use htm_rs::core::{sdr_classifier::SDRClassifier, spatial_pooler::SpatialPooler};
 use mnist::{Mnist, MnistBuilder};
 use rand::{rngs::StdRng, SeedableRng};
@@ -155,7 +158,8 @@ fn main() {
             false,
         );
 
-        if (i + 1) % 1000 == 0 { // Progress indicator
+        if (i + 1) % 1000 == 0 {
+            // Progress indicator
             println!("  Trained {}/{} images", i + 1, training_len);
         }
     }
@@ -209,7 +213,8 @@ fn main() {
                 correct_predictions += 1;
             }
         }
-        if (i + 1) % 1000 == 0 { // Progress indicator
+        if (i + 1) % 1000 == 0 {
+            // Progress indicator
             println!("  Tested {}/{} images", i + 1, testing_len);
         }
     }

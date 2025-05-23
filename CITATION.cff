@@ -1,0 +1,7 @@
+@software{Schoepplenberg2017,
+  author = {Schoepplenberg, J.},
+  title = {{Hierarchical Temporal Memory (HTM) implementation in Rust}},
+  url = {https://github.com/J-Schoepplenberg/htm-rs},
+  version = {1.0},
+  year = {2025}
+}

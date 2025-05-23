@@ -59,12 +59,4 @@ The SDR Classifier maps SDRs to known categories (classes), enabling classificat
 
 This implementation scores ~95% on the classic MNIST data set.
 
-The accuracy score heavily depends on the pipeline that is being used and on the selection of the hyperparameters. 
-
-### Saccades
-
-Traditionally, HTM processes an MNIST image by feeding the entire 28x28 image into the Spatial Pooler and training the classifier on its output.
-
-As an alternative, I experimented with incorporating saccades into image recognition. Instead of processing an image all at once, human vision relies on multiple small glimpses (saccades) focused on different regions. To simulate this biologically inspired approach, I divided each 28x28 MNIST image into 49 non-overlapping 4x4 patches. Now, the first-layer Spatial Pooler receives each patch sequentially. The resulting SDRs are then aggregated to maintain spatial relationships and passed to a second-layer Spatial Pooler, which integrates features and enables learning of higher-level representations.
-
-Despite its biological inspiration, this approach did not improve accuracy, but still achieves 95%.
+The accuracy score heavily depends on the pipeline that is being used and on the selection of the hyperparameters.
